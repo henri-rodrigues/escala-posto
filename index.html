@@ -304,11 +304,20 @@ function montarGrade(chave) {
   });
   return { info, linhas, escala };
 }
+// Tudo o que muda a escala de um mês: equipe (turno e folgas), regras, duplas e as férias que caem nele.
+// A escala guarda isso ao ser gerada, e o aviso de "cadastro mudou" só aparece se mudou algo daquele mês.
+function assinaturaMes(chave) {
+  const cad = estado.cadastro, info = infoMes(chave);
+  return textoEstavel({
+    f: cad.funcionarios.map(f => [f.id, grupoDoTurno(f.turno), f.folgas, [...diasFeriasNoMes(cad, f.id, info)].sort((a, b) => a - b).join(',')]),
+    r: cad.regras, p: cad.pares || [],
+  });
+}
 function validar(g) {
   const { info, linhas } = g, R = estado.cadastro.regras, alertas = [], avisos = [];
   const dias = [];
   const idx = Object.fromEntries(linhas.map((l, i) => [l.f.id, i]));
-  const pares = (estado.cadastro.pares || []).filter(([a, b]) => a in idx && b in idx);
+  const pares = (estado.cadastro.pares || []).filter(([a, b]) => a in idx && b in idx && a !== b);
   const conflitoPar = linhas.map(() => new Set());
   for (let d = 0; d < info.nDias; d++) {
     let tot = 0, t7 = 0, t8 = 0;
@@ -323,7 +332,9 @@ function validar(g) {
       const la = linhas[idx[a]], lb = linhas[idx[b]];
       if (la.cel[d] !== 'T' && lb.cel[d] !== 'T') {
         conflitoPar[idx[a]].add(d); conflitoPar[idx[b]].add(d);
-        alertas.push(`${rot}: ${primeiroNome(la.f.nome)} e ${primeiroNome(lb.f.nome)} ausentes no mesmo dia.`);
+        alertas.push(la.cel[d] === 'V' && lb.cel[d] === 'V'
+          ? `${rot}: ${primeiroNome(la.f.nome)} e ${primeiroNome(lb.f.nome)} de férias ao mesmo tempo - reveja as férias.`
+          : `${rot}: ${primeiroNome(la.f.nome)} e ${primeiroNome(lb.f.nome)} ausentes no mesmo dia.`);
       }
     }
     dias.push({ tot, t7, t8, ruimTot, ruim7, ruim8 });
@@ -353,25 +364,58 @@ const estado = { cadastro: null, escalas: {}, modo: 'carregando' };
 let db = null;
 const filas = {};
 function cadastroVazio() { return { versao: 1, atualizadoEm: new Date().toISOString(), funcionarios: [], pares: [], regras: { minTotal: 8, min7: 4, min8: 3 }, ferias: [] }; }
+// O banco aceita gravação de qualquer pessoa com o link: números viram números, datas e ids estranhos são descartados,
+// assim nada do banco entra na página como HTML.
+const ID_OK = /^[\w-]{1,40}$/, DATA_OK = /^\d{4}-\d{2}-\d{2}$/;
+const inteiro = (v, padrao) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : padrao; };
+function normalizar(cad) {
+  const R = cad.regras || {};
+  cad.regras = { minTotal: inteiro(R.minTotal, 8), min7: inteiro(R.min7, 4), min8: inteiro(R.min8, 3) };
+  cad.funcionarios = (Array.isArray(cad.funcionarios) ? cad.funcionarios : []).filter(f => f && ID_OK.test(f.id))
+    .map(f => ({ ...f, nome: String(f.nome ?? ''), turno: String(f.turno ?? ''), folgas: Math.min(31, inteiro(f.folgas, 0)) }));
+  cad.ferias = (Array.isArray(cad.ferias) ? cad.ferias : []).filter(fe => fe && ID_OK.test(fe.id) && ID_OK.test(fe.funcId) && DATA_OK.test(fe.inicio) && DATA_OK.test(fe.fim))
+    .map(fe => ({ ...fe, obs: String(fe.obs ?? '') }));
+  cad.pares = (Array.isArray(cad.pares) ? cad.pares : []).filter(p => Array.isArray(p) && p.length === 2 && p.every(x => ID_OK.test(x)));
+  return cad;
+}
 // O Firestore não guarda lista dentro de lista: as duplas vão para o banco como {a, b}.
 const paraBanco = (caminho, dados) => caminho === 'app/cadastro' && dados ? { ...dados, pares: (dados.pares || []).map(([a, b]) => ({ a, b })) } : dados;
 const doBanco = dados => dados && Array.isArray(dados.pares) ? { ...dados, pares: dados.pares.map(p => Array.isArray(p) ? p : [p.a, p.b]) } : dados;
 // O banco pode devolver os campos em outra ordem; compara com as chaves ordenadas.
 const textoEstavel = o => JSON.stringify(o, (k, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(c => [c, v[c]])) : v);
 function gravarLocal() { try { localStorage.setItem(CHAVE_LOCAL, JSON.stringify({ cadastro: estado.cadastro, escalas: estado.escalas })); } catch (e) { toast('Não foi possível salvar neste navegador.'); } }
-function gravar(caminho, dados) {
+function normalizarEscala(e) {
+  const linhas = {};
+  if (e && e.linhas && typeof e.linhas === 'object') for (const [id, t] of Object.entries(e.linhas)) if (ID_OK.test(id) && typeof t === 'string') linhas[id] = t.replace(/[^F]/g, 'T');
+  return { ...(e || {}), linhas };
+}
+let salvando = 0;
+const falhaAoSalvar = e => toast(e && (e.code === 'invalid_argument' || e.code === 'permission-denied') ? 'Você só pode ver esta escala; alterações não são salvas.' : 'Falha ao salvar. Verifique a internet e tente de novo.');
+// juntar = true grava só os campos enviados (ex.: a linha de uma pessoa), sem apagar o que outra pessoa mudou ao mesmo tempo.
+function gravar(caminho, dados, juntar) {
   if (estado.modo === 'local') { gravarLocal(); return; }
   if (!db) return;
-  filas[caminho] = (filas[caminho] || Promise.resolve()).then(() => db.doc(caminho).set(paraBanco(caminho, dados))).catch(e => {
-    toast(e && (e.code === 'invalid_argument' || e.code === 'permission-denied') ? 'Você só pode ver esta escala; alterações não são salvas.' : 'Falha ao salvar. Verifique a internet e tente de novo.');
-  });
+  if (estado.modo === 'firebase') {
+    // Grava na hora: o Firestore já mantém a ordem e mostra a mudança local antes de o servidor confirmar.
+    salvando++;
+    db.doc(caminho).set(paraBanco(caminho, dados), juntar ? { merge: true } : {}).catch(falhaAoSalvar).finally(() => salvando--);
+    return;
+  }
+  filas[caminho] = (filas[caminho] || Promise.resolve()).then(() => db.doc(caminho).set(paraBanco(caminho, dados))).catch(falhaAoSalvar);
 }
 function salvarCadastro() { estado.cadastro.atualizadoEm = new Date().toISOString(); gravar('app/cadastro', clone(estado.cadastro)); }
 const timersEscala = {};
 function salvarEscala(chave, atraso = 0) {
   clearTimeout(timersEscala[chave]);
-  timersEscala[chave] = setTimeout(() => gravar('escalas/' + chave, clone(estado.escalas[chave])), atraso);
+  timersEscala[chave] = setTimeout(() => { delete timersEscala[chave]; gravar('escalas/' + chave, clone(estado.escalas[chave])); }, atraso);
 }
+function salvarLinha(chave, funcId) {
+  if (estado.modo !== 'firebase') { salvarEscala(chave, 700); return; }
+  gravar('escalas/' + chave, { linhas: { [funcId]: estado.escalas[chave].linhas[funcId] } }, true);
+}
+window.addEventListener('beforeunload', e => {
+  if (salvando > 0 || Object.keys(timersEscala).length) { e.preventDefault(); e.returnValue = ''; }
+});
 function iniciarLocal() {
   estado.modo = 'local';
   let salvo = null;
@@ -379,6 +423,8 @@ function iniciarLocal() {
   if (salvo && salvo.cadastro) { estado.cadastro = salvo.cadastro; estado.escalas = salvo.escalas || {}; }
   else if (window.DADOS_INICIAIS) { estado.cadastro = clone(window.DADOS_INICIAIS.cadastro); estado.escalas = clone(window.DADOS_INICIAIS.escalas || {}); gravarLocal(); }
   else estado.cadastro = cadastroVazio();
+  normalizar(estado.cadastro);
+  for (const k of Object.keys(estado.escalas)) estado.escalas[k] = normalizarEscala(estado.escalas[k]);
   render();
 }
 async function abrirBanco() {
@@ -417,15 +463,16 @@ async function iniciar() {
     const txt = textoEstavel(dados);
     if (estado.cadastro && (txt === ultimoCad || txt === textoEstavel(estado.cadastro))) { ultimoCad = txt; return; }
     ultimoCad = txt;
-    estado.cadastro = dados ? clone(dados) : (estado.cadastro || cadastroVazio());
+    estado.cadastro = dados ? normalizar(clone(dados)) : (estado.cadastro || cadastroVazio());
     render();
   }, e => estado.cadastro ? toast('A conexão com os dados foi interrompida. Recarregue a página.') : telaErro('O banco de dados recusou a conexão. Confira se o Firestore foi criado e se as regras foram publicadas.', e));
   db.collection('escalas').onSnapshot(q => {
     let mudou = false;
     q.docChanges().forEach(ch => {
       if (ch.type === 'removed') { delete estado.escalas[ch.doc.id]; mudou = true; return; }
-      const novo = ch.doc.data();
-      if (textoEstavel(estado.escalas[ch.doc.id]) !== textoEstavel(novo)) { estado.escalas[ch.doc.id] = clone(novo); mudou = true; }
+      if (!/^\d{4}-\d{2}$/.test(ch.doc.id)) return;
+      const novo = normalizarEscala(ch.doc.data());
+      if (textoEstavel(estado.escalas[ch.doc.id]) !== textoEstavel(novo)) { estado.escalas[ch.doc.id] = novo; mudou = true; }
     });
     if (mudou && estado.cadastro) render();
   }, e => console.error(e));
@@ -466,7 +513,8 @@ function telaEscala() {
     return topo + `<div class="painel vazio"><h2>A escala de ${esc(info.nome)} ainda não foi gerada</h2><p>Clique em <b>Gerar escala do mês</b>. As folgas são distribuídas respeitando os mínimos, as duplas e as férias cadastradas.</p>${fer.length ? `<p>De férias neste mês: ${fer.map(l => `<b>${esc(nomeCurto(l.f.nome))}</b> (${l.nFerias} dias)`).join(', ')}.</p>` : ''}</div>`;
   }
   let html = topo;
-  if (escala.geradoEm && cad.atualizadoEm && cad.atualizadoEm > escala.geradoEm) html += `<div class="aviso">O cadastro (funcionários, férias ou regras) mudou depois que esta escala foi gerada. Confira os alertas ou clique em <b>Gerar nova distribuição</b>.</div>`;
+  const desatualizada = escala.base ? escala.base !== assinaturaMes(ui.mes) : !!(escala.geradoEm && cad.atualizadoEm && cad.atualizadoEm > escala.geradoEm);
+  if (desatualizada) html += `<div class="aviso">O cadastro (funcionários, férias ou regras) mudou depois que esta escala foi gerada. Confira os alertas ou clique em <b>Gerar nova distribuição</b>.</div>`;
   html += `<div class="legenda"><span><i style="background:var(--surface-2)">T</i>Trabalhando</span><span><i style="background:var(--folga-bg);color:var(--folga-ink)">F</i>Folga</span><span><i style="background:var(--ferias-bg);color:var(--ferias-ink)">V</i>Férias (conta como ausência)</span><span><i style="background:var(--fds)"></i>Sábado/domingo</span><span>Clique num dia para trocar entre T e F.</span></div>`;
   html += `<div class="grade-box"><table class="grade"><thead><tr><th class="nome">Funcionário</th>`;
   for (let d = 0; d < info.nDias; d++) html += `<th class="${ehFds(info.dow[d]) ? 'fds' : ''}"><span class="dn">${pad(d + 1)}</span><span class="ds">${DIAS_SEM[info.dow[d]]}</span></th>`;
@@ -603,7 +651,7 @@ function gerarMes() {
     const r = gerarFolgas({ nDias: info.nDias, dow: info.dow, funcionarios: F, pares, ...cad.regras, seed: Date.now() });
     const linhas = {};
     F.forEach((f, i) => { const s = new Set(r.off[i]); let t = ''; for (let d = 0; d < info.nDias; d++) t += s.has(d) ? 'F' : 'T'; linhas[f.id] = t; });
-    estado.escalas[ui.mes] = { geradoEm: new Date().toISOString(), linhas };
+    estado.escalas[ui.mes] = { geradoEm: new Date().toISOString(), base: assinaturaMes(ui.mes), linhas };
     salvarEscala(ui.mes);
     ui.gerando = false; render();
     toast(r.violacoes ? 'Escala gerada, mas faltam pessoas em alguns dias. Veja a conferência.'
@@ -617,7 +665,7 @@ function alternarCelula(i, d) {
   const atual = (esc_.linhas[l.f.id] || 'T'.repeat(g.info.nDias)).padEnd(g.info.nDias, 'T').split('');
   atual[d] = atual[d] === 'F' ? 'T' : 'F';
   esc_.linhas[l.f.id] = atual.join('');
-  render(); salvarEscala(ui.mes, 700);
+  render(); salvarLinha(ui.mes, l.f.id);
 }
 
 async function oferecerArquivo(nome, blob, salvarLocal) {
@@ -721,7 +769,8 @@ $('#arquivo-import').addEventListener('change', e => {
     try {
       const d = JSON.parse(fr.result);
       if (!d.cadastro || !Array.isArray(d.cadastro.funcionarios)) throw new Error('formato');
-      estado.cadastro = d.cadastro; estado.escalas = d.escalas || {};
+      estado.cadastro = normalizar(d.cadastro); estado.escalas = {};
+      for (const [k, e] of Object.entries(d.escalas || {})) if (/^\d{4}-\d{2}$/.test(k)) estado.escalas[k] = normalizarEscala(e);
       salvarCadastro(); Object.keys(estado.escalas).forEach(k => salvarEscala(k));
       render(); toast('Dados importados.');
     } catch (err) { toast('Arquivo inválido. Use um arquivo exportado por este sistema.'); }
