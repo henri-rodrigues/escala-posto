@@ -28,8 +28,8 @@ Sistema web simples para montar a escala mensal de trabalho e folgas da equipe d
 - Segunda a sexta: pelo menos 4 no turno 07H00 às 16H00 e 3 no turno 08H00 às 17H00.
 - 5 folgas por mês por funcionário, sorteadas e espalhadas, só em dias com o posto aberto.
 - Férias contam em dias corridos (inclusive fins de semana e feriados).
-- Quando não cabem todas as folgas sem ficar abaixo do mínimo, as **quartas** ficam com menos gente; nos outros dias o
-  mínimo é mantido. Se nem assim couber, a folga fica pendente.
+- Quando não cabem todas as folgas sem ficar abaixo do mínimo, primeiro as **quartas** ficam com menos gente; se não
+  bastar, outros dias também, espalhando a falta. Folga pendente só fica em último caso.
 - Pelo menos uma folga em segunda ou sexta, quando possível.
 - Duplas que nunca folgam no mesmo dia (editáveis na aba Regras).
 - Funcionário com 0 folgas não folga (ex.: Elisabete).

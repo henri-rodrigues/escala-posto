@@ -248,17 +248,20 @@ function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = fal
 // Recozimento simulado: move folgas entre dias até não haver conflito e a distribuição ficar equilibrada.
 // Férias entram como ausência fixa em todas as regras (mínimo do dia, turnos e duplas).
 // Dias com o posto fechado não contam: ninguém trabalha nem folga neles.
-// Ordem de prioridade quando não cabe tudo: 1) nenhum dia abaixo do mínimo fora das quartas e duplas sempre respeitadas;
-// 2) todas as folgas dadas, usando as quartas para ficar com menos gente; 3) só então folga pendente.
-const CUSTO_PENDENTE = 20000;
-const custoQuarta = falta => 10000 * falta + 2000 * falta * falta; // por unidade fica abaixo de CUSTO_PENDENTE até 4 a menos
+// Ordem de prioridade: 1) duplas sempre respeitadas (regra dura); 2) todas as folgas dadas; quando não cabem no mínimo,
+// primeiro as quartas ficam com menos gente, depois os outros dias; 3) só então folga pendente.
+// Cada pessoa a menos no mesmo dia custa mais que a anterior, então a falta se espalha em vez de esvaziar um dia.
+// Custo de cada pessoa a menos, na ordem: quarta 10k, 22k, 34k, 46k… · outro dia 25k, 55k, 85k, 115k… · pendente 120k.
+const CUSTO_PENDENTE = 120000, PESO_DURO = 1e6;
+const custoQuarta = falta => 10000 * falta + 6000 * falta * (falta - 1);
+const custoOutroDia = falta => 25000 * falta + 15000 * falta * (falta - 1);
 function gerarFolgas(cfg) {
   const { nDias, dow, funcionarios: F, pares, minTotal, min7, min8 } = cfg;
   const fechado = cfg.fechado || new Uint8Array(nDias);
   const abertos = [], abertoAnterior = new Int16Array(nDias).fill(-1);
   for (let d = 0, ult = -1; d < nDias; d++) { abertoAnterior[d] = ult; if (!fechado[d]) { abertos.push(d); ult = d; } }
   const N = F.length;
-  if (!N) return { off: [], violacoes: 0, faltaQuarta: 0, pendentes: 0 };
+  if (!N) return { off: [], violacoes: 0, faltaQuarta: 0, faltaOutros: 0, pendentes: 0 };
   const n7 = F.filter(f => f.grupo === '7').length, n8 = F.filter(f => f.grupo === '8').length;
   const maxOff = N - minTotal, max7 = Math.max(0, n7 - min7), max8 = Math.max(0, n8 - min8);
   const bloq = F.map(f => { const s = new Uint8Array(nDias); f.bloqueados.forEach(d => s[d] = 1); return s; });
@@ -276,7 +279,7 @@ function gerarFolgas(cfg) {
   const porDia = new Array(nDias), o7 = new Array(nDias), o8 = new Array(nDias);
 
   function custo(off) {
-    let duro = 0, c = 0, quarta = 0;
+    let duro = 0, c = 0, quarta = 0, outros = 0;
     for (const d of abertos) { porDia[d] = fix[d]; o7[d] = fix7[d]; o8[d] = fix8[d]; }
     for (let i = 0; i < N; i++) {
       // 1 = férias, 2 = folga, 3 = posto fechado (quebra a sequência de dias trabalhados)
@@ -287,7 +290,7 @@ function gerarFolgas(cfg) {
       const util = ehUtil(dow[d]);
       const fTot = Math.max(0, porDia[d] - maxOff), f7 = util ? Math.max(0, o7[d] - max7) : 0, f8 = util ? Math.max(0, o8[d] - max8) : 0;
       const falta = Math.max(fTot, f7 + f8);
-      if (falta) { if (ehQuarta(dow[d])) { quarta += falta; c += custoQuarta(falta); } else duro += falta; }
+      if (falta) { if (ehQuarta(dow[d])) { quarta += falta; c += custoQuarta(falta); } else { outros += falta; c += custoOutroDia(falta); } }
       c += 30 * (porDia[d] - media) ** 2;
     }
     for (const [x, y] of pares) for (const d of abertos) if (aus[x][d] && aus[y][d] && !(bloq[x][d] && bloq[y][d])) duro++;
@@ -307,7 +310,7 @@ function gerarFolgas(cfg) {
       }
       if (corrida > 7) c += 60 * (corrida - 7) ** 2;
     }
-    return { c: c + duro * 100000, duro, quarta };
+    return { c: c + duro * PESO_DURO, duro, quarta, outros };
   }
   function inicial() {
     return F.map((f, i) => { const pool = livres[i].slice(), out = []; while (out.length < metas[i]) out.push(pool.splice(ri(pool.length), 1)[0]); return out; });
@@ -328,11 +331,11 @@ function gerarFolgas(cfg) {
     }
     if (!melhor || cur < melhor.c) melhor = { c: cur, off: off.map(a => a.slice().sort((x, y) => x - y)) };
     const cm = custo(melhor.off);
-    if (melhor.off.every(a => !a.includes(-1)) && cm.duro === 0 && cm.quarta === 0 && r >= 1) break;
+    if (melhor.off.every(a => !a.includes(-1)) && cm.duro === 0 && cm.quarta === 0 && cm.outros === 0 && r >= 1) break;
   }
   const pendentes = melhor.off.reduce((s, a) => s + a.filter(d => d < 0).length, 0);
   const final = custo(melhor.off);
-  return { off: melhor.off.map(a => a.filter(d => d >= 0)), violacoes: final.duro, faltaQuarta: final.quarta, pendentes };
+  return { off: melhor.off.map(a => a.filter(d => d >= 0)), violacoes: final.duro, faltaQuarta: final.quarta, faltaOutros: final.outros, pendentes };
 }
 
 // ======================= modelo da escala =======================
@@ -400,9 +403,12 @@ function validar(g) {
     const util = ehUtil(info.dow[d]);
     const ruimTot = tot < R.minTotal, ruim7 = util && t7 < R.min7, ruim8 = util && t8 < R.min8;
     const rot = `Dia ${pad(d + 1)} (${DIAS_SEM[info.dow[d]].toLowerCase()})`;
-    // Quarta é o dia escolhido para ficar com menos gente quando não há como dar todas as folgas: vira observação.
-    const quarta = ehQuarta(info.dow[d]) && (ruimTot || ruim7 || ruim8);
-    const lista = quarta ? avisos : alertas, fim = quarta ? ' Quarta com menos gente para completar as folgas.' : '';
+    // Para dar todas as folgas, primeiro as quartas e depois outros dias podem ficar com menos gente: vira observação.
+    // Dia abaixo do mínimo sem ninguém de folga é falta causada pelas férias: continua alerta.
+    const abaixo = ruimTot || ruim7 || ruim8, temFolga = linhas.some(l => l.cel[d] === 'F');
+    const quarta = abaixo && ehQuarta(info.dow[d]) && temFolga, menos = abaixo && !ehQuarta(info.dow[d]) && temFolga;
+    const lista = quarta || menos ? avisos : alertas;
+    const fim = quarta ? ' Quarta com menos gente para completar as folgas.' : menos ? ' Dia com menos gente para completar as folgas (as quartas não bastaram).' : '';
     if (ruimTot) lista.push(`${rot}: ${tot} trabalhando, mínimo é ${R.minTotal}.${fim}`);
     if (ruim7) lista.push(`${rot}: ${t7} no turno ${TURNO_7}, mínimo é ${R.min7}.${fim}`);
     if (ruim8) lista.push(`${rot}: ${t8} no turno ${TURNO_8}, mínimo é ${R.min8}.${fim}`);
@@ -415,7 +421,7 @@ function validar(g) {
           : `${rot}: ${primeiroNome(la.f.nome)} e ${primeiroNome(lb.f.nome)} ausentes no mesmo dia.`);
       }
     }
-    dias.push({ tot, t7, t8, ruimTot, ruim7, ruim8, quarta });
+    dias.push({ tot, t7, t8, ruimTot, ruim7, ruim8, quarta, menos });
   }
   const pessoas = linhas.map((l, i) => {
     const folgas = l.cel.reduce((s, c, d) => c === 'F' ? s.concat(d) : s, []);
@@ -594,8 +600,10 @@ function telaEscala() {
   const nAlert = v.alertas.length, nAviso = v.avisos.length;
   let topo = `<div class="barra-acoes">`;
   const quartas = v.dias.map((d, i) => d.quarta ? pad(i + 1) : null).filter(Boolean);
+  const outros = v.dias.map((d, i) => d.menos ? pad(i + 1) : null).filter(Boolean);
+  const excecoes = [quartas.length ? `${quartas.length === 1 ? 'na quarta' : 'nas quartas'} ${quartas.join(', ')}` : '', outros.length ? `${outros.length === 1 ? 'no dia' : 'nos dias'} ${outros.join(', ')}` : ''].filter(Boolean).join(' e ');
   if (escala) topo += nAlert ? `<span class="status ruim">● ${nAlert} ${nAlert === 1 ? 'problema de cobertura' : 'problemas de cobertura'}</span>`
-    : quartas.length ? `<span class="status atencao">✓ Mínimos atendidos, exceto ${quartas.length === 1 ? 'na quarta' : 'nas quartas'} ${quartas.join(', ')}</span>`
+    : excecoes ? `<span class="status atencao">Mínimos atendidos, exceto ${excecoes}</span>`
     : `<span class="status ok">✓ Mínimos e duplas atendidos</span>`;
   if (escala && nAviso) topo += ` <span class="status atencao">${nAviso} ${nAviso === 1 ? 'observação' : 'observações'}</span>`;
   topo += `<span class="esp"></span>`;
@@ -611,7 +619,7 @@ function telaEscala() {
   const desatualizada = escala.base ? escala.base !== assinaturaMes(ui.mes) : !!(escala.geradoEm && cad.atualizadoEm && cad.atualizadoEm > escala.geradoEm);
   if (desatualizada) html += `<div class="aviso">O cadastro (funcionários, férias ou regras) mudou depois que esta escala foi gerada. Confira os alertas ou clique em <b>Gerar nova distribuição</b>.</div>`;
   const fechados = g.fechados, temFds = info.dow.some((w, d) => ehFds(w) && !fechados.has(d));
-  html += `<div class="legenda"><span><i style="background:var(--surface-2)">T</i>Trabalhando</span><span><i style="background:var(--folga-bg);color:var(--folga-ink)">F</i>Folga</span><span><i style="background:var(--ferias-bg);color:var(--ferias-ink)">V</i>Férias (dias corridos)</span><span><i style="background:var(--fds)">–</i>Posto fechado (fim de semana, feriado — aba Agenda)</span><span><i style="background:var(--aviso-bg);color:var(--aviso-ink)">!</i>Quarta com menos gente</span><span>Clique num dia para trocar entre T e F.</span></div>`;
+  html += `<div class="legenda"><span><i style="background:var(--surface-2)">T</i>Trabalhando</span><span><i style="background:var(--folga-bg);color:var(--folga-ink)">F</i>Folga</span><span><i style="background:var(--ferias-bg);color:var(--ferias-ink)">V</i>Férias (dias corridos)</span><span><i style="background:var(--fds)">–</i>Posto fechado (fim de semana, feriado — aba Agenda)</span><span><i style="background:var(--aviso-bg);color:var(--aviso-ink)">!</i>Dia com menos gente para completar as folgas (quartas primeiro)</span><span>Clique num dia para trocar entre T e F.</span></div>`;
   html += `<div class="grade-box"><table class="grade"><thead><tr><th class="nome">Funcionário</th>`;
   for (let d = 0; d < info.nDias; d++) html += `<th class="${fechados.has(d) ? 'fds' : ''}" ${fechados.has(d) ? `title="${esc(fechados.get(d))}"` : ''}><span class="dn">${pad(d + 1)}</span><span class="ds">${DIAS_SEM[info.dow[d]]}</span></th>`;
   html += `<th>Folgas</th><th>Seg/Sex</th>${temFds ? '<th>Sáb/Dom</th>' : ''}</tr></thead><tbody>`;
@@ -629,7 +637,7 @@ function telaEscala() {
   const R = cad.regras;
   const linhaRes = (rot, campo, ruim, classe) => {
     let s = `<tr class="${classe || ''}"><td class="nome">${rot}</td>`;
-    v.dias.forEach(dd => s += dd.fechado ? `<td class="fds">–</td>` : `<td class="${dd[ruim] ? (dd.quarta ? 'quarta' : 'ruim') : ''}">${dd[campo]}</td>`);
+    v.dias.forEach(dd => s += dd.fechado ? `<td class="fds">–</td>` : `<td class="${dd[ruim] ? (dd.quarta || dd.menos ? 'quarta' : 'ruim') : ''}">${dd[campo]}</td>`);
     return s + `<td colspan="${temFds ? 3 : 2}"></td></tr>`;
   };
   html += linhaRes(`Turno 07h–16h <small>mín. ${R.min7} (seg–sex)</small>`, 't7', 'ruim7');
@@ -762,7 +770,7 @@ function telaRegras() {
     <label class="campo">Mínimo no turno ${TURNO_7} (segunda a sexta)<input type="number" min="0" id="r-min7" data-regra="min7" value="${R.min7}"></label>
     <label class="campo">Mínimo no turno ${TURNO_8} (segunda a sexta)<input type="number" min="0" id="r-min8" data-regra="min8" value="${R.min8}"></label></div>
     <p class="nota">Também valem sempre: folgas sorteadas e distribuídas de forma equilibrada, e pelo menos uma folga em segunda ou sexta, quando possível. Os mínimos só valem nos dias com o posto aberto (aba Agenda).</p>
-    <p class="nota"><b>Quando não couber:</b> se não der para dar todas as folgas sem ficar abaixo do mínimo, as <b>quartas</b> ficam com menos gente. Nos outros dias o mínimo é mantido.</p></section>
+    <p class="nota"><b>Quando não couber:</b> para dar todas as folgas, primeiro as <b>quartas</b> ficam com menos gente; se não bastar, outros dias também, espalhando a falta. Folga pendente só fica em último caso.</p></section>
     <section class="painel"><h2>Não podem folgar no mesmo dia</h2><div class="tab-box"><table class="tab"><tbody>`;
   (cad.pares || []).forEach(([a, b], i) => {
     h += `<tr><td><select id="pa-${i}" data-par="${i}" data-lado="0" aria-label="Funcionário 1">${opts(a)}</select></td><td>e</td><td><select id="pb-${i}" data-par="${i}" data-lado="1" aria-label="Funcionário 2">${opts(b)}</select></td><td>${ui.confirmar === 'del-par:' + i ? `<span class="confirma">Remover? <button class="btn perigo" data-acao="confirma-del-par" data-i="${i}">Remover</button><button class="btn" data-acao="cancelar">Não</button></span>` : `<button class="btn perigo" data-acao="del-par" data-i="${i}">Remover</button>`}</td></tr>`;
@@ -789,7 +797,7 @@ function sortearMes(chave, tentativas = 3) {
     const r = gerarFolgas({ nDias: info.nDias, dow: info.dow, funcionarios: F, pares, fechado, ...cad.regras, seed: Date.now() + t * 7919 });
     // quem podia folgar numa segunda ou sexta aberta e ficou sem
     const semSS = F.filter((f, i) => f.meta && !r.off[i].some(d => ehSegSex(info.dow[d])) && info.dow.some((w, d) => ehSegSex(w) && !fechado[d] && !f.bloqueados.includes(d))).length;
-    const nota = r.violacoes * 1e6 + r.pendentes * 1e3 + r.faltaQuarta * 10 + semSS;
+    const nota = r.violacoes * 1e8 + r.pendentes * 1e6 + r.faltaOutros * 1e3 + r.faltaQuarta * 10 + semSS;
     if (!melhor || nota < melhor.nota) melhor = { r, nota };
   }
   const linhas = {};
@@ -805,6 +813,7 @@ function gerarMes() {
     ui.gerando = false; render();
     toast(r.violacoes ? 'Escala gerada, mas faltam pessoas em alguns dias. Veja a conferência.'
       : r.pendentes ? `Escala gerada. ${r.pendentes} folga(s) ficaram pendentes mesmo usando as quartas.`
+      : r.faltaOutros ? 'Escala gerada. Não coube tudo: as quartas e alguns outros dias ficaram com menos gente.'
       : r.faltaQuarta ? 'Escala gerada. Não coube tudo: algumas quartas ficaram com menos gente.' : 'Escala gerada. Todas as regras atendidas.');
   }, 30);
 }
@@ -842,7 +851,7 @@ function baixarPDF() {
   const cab = () => { doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(21, 48, 44); doc.text('Posto de Saúde', 10, 12); doc.setFontSize(11); doc.text(titulo, 10, 18); };
   cab();
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(79, 102, 98);
-  doc.text('T = trabalhando   F = folga   V = férias   - = posto fechado   (amarelo: quarta com menos gente)', W - 10, 18, { align: 'right' });
+  doc.text('T = trabalhando   F = folga   V = férias   - = posto fechado   (amarelo: dia com menos gente para completar as folgas)', W - 10, 18, { align: 'right' });
   const fechados = g.fechados, temFds = info.dow.some((w, d) => ehFds(w) && !fechados.has(d));
   const head = [['Funcionário', 'Turno', ...info.dow.map((w, d) => pad(d + 1)), 'Folgas'], ['', '', ...info.dow.map(w => DIAS_SEM[w].slice(0, 3)), '']];
   const body = linhas.map((l, i) => [nomeCurto(l.f.nome), l.f.turno.replace(' às ', '-'), ...l.cel.map(c => c === 'X' ? '-' : c), `${v.pessoas[i].folgas.length}`]);
@@ -879,7 +888,8 @@ function baixarPDF() {
         if (dd.fechado) { c.cell.styles.fillColor = fds; c.cell.styles.textColor = [120, 140, 136]; return; }
         const ruim = [dd.ruim7, dd.ruim8, dd.ruimTot][c.row.index];
         if (c.row.index === 2) { c.cell.styles.fillColor = verde; c.cell.styles.textColor = 255; }
-        if (ruim) { c.cell.styles.fillColor = dd.quarta ? [255, 225, 140] : verm; c.cell.styles.textColor = dd.quarta ? [107, 77, 0] : 255; }
+        const aceito = dd.quarta || dd.menos;
+        if (ruim) { c.cell.styles.fillColor = aceito ? [255, 225, 140] : verm; c.cell.styles.textColor = aceito ? [107, 77, 0] : 255; }
       }
     },
   });
@@ -898,7 +908,7 @@ function baixarPDF() {
   let y = doc.lastAutoTable.finalY + 8;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text('Conferência das regras', 10, y); y += 5;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-  const regras = [`Mínimo de ${R.minTotal} trabalhando por dia com o posto aberto.`, `Segunda a sexta: mínimo de ${R.min7} no turno ${TURNO_7} e ${R.min8} no turno ${TURNO_8}.`, 'Férias contam como ausência em todas as regras e em dias corridos.', 'Folgas proporcionais aos dias a trabalhar no mês: folgas do mês inteiro x dias a trabalhar / dias do mês, arredondado.', 'Quando não cabem todas as folgas, as quartas ficam com menos gente; nos outros dias o mínimo é mantido.'];
+  const regras = [`Mínimo de ${R.minTotal} trabalhando por dia com o posto aberto.`, `Segunda a sexta: mínimo de ${R.min7} no turno ${TURNO_7} e ${R.min8} no turno ${TURNO_8}.`, 'Férias contam como ausência em todas as regras e em dias corridos.', 'Folgas proporcionais aos dias a trabalhar no mês: folgas do mês inteiro x dias a trabalhar / dias do mês, arredondado.', 'Quando não cabem todas as folgas, primeiro as quartas e depois outros dias ficam com menos gente.'];
   const fechadosUteis = [...fechados].filter(([d]) => !ehFds(info.dow[d]));
   if (fechadosUteis.length) regras.push(`Posto fechado (além dos fins de semana): ${fechadosUteis.map(([d, m]) => `${pad(d + 1)}/${pad(info.mes)} ${m}`).join('; ')}.`);
   const pares = (estado.cadastro.pares || []).map(([a, b]) => { const n = id => nomeCurto(estado.cadastro.funcionarios.find(f => f.id === id)?.nome || '?'); return `${n(a)} e ${n(b)} não folgam no mesmo dia.`; });
