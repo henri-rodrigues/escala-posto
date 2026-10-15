@@ -1,0 +1,15 @@
+rules_version = '2';
+// Sem login: qualquer pessoa com o link do site pode ler e alterar a escala.
+// Só os dois tipos de documento que o site usa são aceitos.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /app/cadastro {
+      allow read: if true;
+      allow write: if request.resource.data.funcionarios is list;
+    }
+    match /escalas/{mes} {
+      allow read: if true;
+      allow write: if mes.matches('^[0-9]{4}-[0-9]{2}$') && request.resource.data.linhas is map;
+    }
+  }
+}
