@@ -14,15 +14,22 @@ Sistema web simples para montar a escala mensal de trabalho e folgas da equipe d
   (folgas do mês inteiro × dias a trabalhar ÷ dias do mês, arredondado, até 5). Ex.: dezembro com 15 dias de
   férias → 16 de 31 dias a trabalhar → 5 × 16 ÷ 31 = 2,6 → **3 folgas**. Férias que passam de um mês para o
   outro são contadas em cada mês separadamente.
-- **Conferência**: alertas em vermelho para falta de cobertura e observações em amarelo (folga pendente, sem segunda/sexta).
+- **Agenda**: dias em que o posto não funciona. Por padrão abre de segunda a sexta. Feriados nacionais, de SP e de
+  Ribeirão Preto já vêm calculados para cada ano e marcados como fechados (pontos facultativos vêm abertos; tudo pode ser
+  trocado). Também dá para marcar outros dias fechados (ponte, dedetização…). Nos dias fechados ninguém trabalha nem folga.
+- **Conferência**: alertas em vermelho para falta de cobertura e observações em amarelo (folga pendente, sem segunda/sexta,
+  quarta com menos gente).
 - **PDF**: relatório do mês com a grade completa, as datas de folga e férias de cada pessoa e a conferência das regras.
 - **Backup**: exportar e importar os dados em `.json` (aba Regras).
 
 ## Regras aplicadas
 
-- Mínimo de 8 trabalhando por dia, todos os dias.
+- Mínimo de 8 trabalhando por dia, nos dias com o posto aberto.
 - Segunda a sexta: pelo menos 4 no turno 07H00 às 16H00 e 3 no turno 08H00 às 17H00.
-- 5 folgas por mês por funcionário, espalhadas e com fins de semana divididos de forma equilibrada.
+- 5 folgas por mês por funcionário, sorteadas e espalhadas, só em dias com o posto aberto.
+- Férias contam em dias corridos (inclusive fins de semana e feriados).
+- Quando não cabem todas as folgas sem ficar abaixo do mínimo, as **quartas** ficam com menos gente; nos outros dias o
+  mínimo é mantido. Se nem assim couber, a folga fica pendente.
 - Pelo menos uma folga em segunda ou sexta, quando possível.
 - Duplas que nunca folgam no mesmo dia (editáveis na aba Regras).
 - Funcionário com 0 folgas não folga (ex.: Elisabete).

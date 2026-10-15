@@ -108,6 +108,10 @@ table.grade { border-collapse: separate; border-spacing: 0; font-variant-numeric
 .grade tfoot tr.total td { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .grade tfoot tr.total td.nome { background: var(--accent); }
 .grade tfoot td.ruim { background: var(--alerta) !important; color: #fff !important; }
+.grade tfoot td.quarta { background: var(--aviso-bg) !important; color: var(--aviso-ink) !important; box-shadow: inset 0 0 0 2px var(--aviso-ink); }
+.grade td.dia.X button { cursor: default; font-weight: 400; }
+.grade tfoot td.fds { color: var(--ink-soft); background: var(--fds); }
+.grade tfoot tr.total td.fds { background: var(--fds); color: var(--ink-soft); border-color: var(--line); }
 
 .colunas { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; margin-top: 24px; }
 @media (max-width: 900px) { .colunas { grid-template-columns: minmax(0, 1fr); } }
@@ -142,6 +146,8 @@ table.tab { width: 100%; border-collapse: collapse; font-size: 14px; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 700; z-index: 50; max-width: calc(100% - 32px); }
 .tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); font-weight: 700; }
 .tag.agora { background: var(--ferias-bg); color: var(--ferias-ink); }
+.check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 14px; cursor: pointer; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
 @media (prefers-reduced-motion: no-preference) { .grade td.dia button { transition: background-color .12s; } }
 </style>
 <style>[hidden]{display:none!important}</style>
@@ -160,6 +166,7 @@ table.tab { width: 100%; border-collapse: collapse; font-size: 14px; }
       <button role="tab" data-aba="escala" aria-selected="true">Escala</button>
       <button role="tab" data-aba="funcionarios" aria-selected="false">Funcionários</button>
       <button role="tab" data-aba="ferias" aria-selected="false">Férias</button>
+      <button role="tab" data-aba="agenda" aria-selected="false">Agenda</button>
       <button role="tab" data-aba="regras" aria-selected="false">Regras</button>
     </nav>
   </div>
@@ -200,25 +207,67 @@ function infoMes(chave) {
 }
 const somaMes = (chave, n) => { const [a, m] = chave.split('-').map(Number); const d = new Date(a, m - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
 const fmtData = iso => { const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}`; };
-const ehUtil = w => w >= 1 && w <= 5, ehSegSex = w => w === 1 || w === 5, ehFds = w => w === 0 || w === 6;
+const ehUtil = w => w >= 1 && w <= 5, ehSegSex = w => w === 1 || w === 5, ehFds = w => w === 0 || w === 6, ehQuarta = w => w === 3;
+const DIAS_LONGOS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const isoDe = dt => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+function pascoa(ano) {
+  const a = ano % 19, b = Math.floor(ano / 100), c = ano % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const n = h + l - 7 * m + 114;
+  return new Date(ano, Math.floor(n / 31) - 1, (n % 31) + 1);
+}
+// Feriados nacionais, de SP e de Ribeirão Preto. Pontos facultativos vêm com o posto aberto; tudo pode ser trocado na aba Agenda.
+function feriadosDoAno(ano) {
+  const p = pascoa(ano), rel = n => isoDe(new Date(ano, p.getMonth(), p.getDate() + n)), fixo = (m, d) => `${ano}-${pad(m)}-${pad(d)}`;
+  return [
+    [fixo(1, 1), 'Confraternização Universal', 'nacional'],
+    [fixo(1, 20), 'São Sebastião (padroeiro)', 'municipal'],
+    [rel(-48), 'Carnaval (segunda)', 'facultativo'],
+    [rel(-47), 'Carnaval (terça)', 'facultativo'],
+    [rel(-46), 'Quarta-feira de Cinzas (até 14h)', 'facultativo'],
+    [rel(-2), 'Sexta-feira Santa', 'nacional'],
+    [fixo(4, 21), 'Tiradentes', 'nacional'],
+    [fixo(5, 1), 'Dia do Trabalho', 'nacional'],
+    [rel(60), 'Corpus Christi', 'facultativo'],
+    [fixo(6, 19), 'Aniversário de Ribeirão Preto', 'municipal'],
+    [fixo(7, 9), 'Revolução Constitucionalista', 'estadual'],
+    [fixo(9, 7), 'Independência do Brasil', 'nacional'],
+    [fixo(10, 12), 'Nossa Senhora Aparecida', 'nacional'],
+    [fixo(10, 28), 'Dia do Servidor Público', 'facultativo'],
+    [fixo(11, 2), 'Finados', 'nacional'],
+    [fixo(11, 15), 'Proclamação da República', 'nacional'],
+    [fixo(11, 20), 'Consciência Negra', 'nacional'],
+    [fixo(12, 24), 'Véspera de Natal (após 14h)', 'facultativo'],
+    [fixo(12, 25), 'Natal', 'nacional'],
+    [fixo(12, 31), 'Véspera de Ano-Novo (após 14h)', 'facultativo'],
+  ].map(([data, nome, tipo]) => ({ data, nome, tipo, fechadoPadrao: tipo !== 'facultativo' })).sort((x, y) => x.data.localeCompare(y.data));
+}
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 3200); }
 
 // ======================= gerador de folgas =======================
 // Recozimento simulado: move folgas entre dias até não haver conflito e a distribuição ficar equilibrada.
 // Férias entram como ausência fixa em todas as regras (mínimo do dia, turnos e duplas).
+// Dias com o posto fechado não contam: ninguém trabalha nem folga neles.
+// Ordem de prioridade quando não cabe tudo: 1) nenhum dia abaixo do mínimo fora das quartas e duplas sempre respeitadas;
+// 2) todas as folgas dadas, usando as quartas para ficar com menos gente; 3) só então folga pendente.
+const CUSTO_PENDENTE = 20000;
+const custoQuarta = falta => 10000 * falta + 2000 * falta * falta; // por unidade fica abaixo de CUSTO_PENDENTE até 4 a menos
 function gerarFolgas(cfg) {
   const { nDias, dow, funcionarios: F, pares, minTotal, min7, min8 } = cfg;
+  const fechado = cfg.fechado || new Uint8Array(nDias);
+  const abertos = [], abertoAnterior = new Int16Array(nDias).fill(-1);
+  for (let d = 0, ult = -1; d < nDias; d++) { abertoAnterior[d] = ult; if (!fechado[d]) { abertos.push(d); ult = d; } }
   const N = F.length;
   const n7 = F.filter(f => f.grupo === '7').length, n8 = F.filter(f => f.grupo === '8').length;
-  const maxOff = N - minTotal, max7 = n7 - min7, max8 = n8 - min8;
+  const maxOff = N - minTotal, max7 = Math.max(0, n7 - min7), max8 = Math.max(0, n8 - min8);
   const bloq = F.map(f => { const s = new Uint8Array(nDias); f.bloqueados.forEach(d => s[d] = 1); return s; });
-  const livres = F.map((f, i) => { const a = []; for (let d = 0; d < nDias; d++) if (!bloq[i][d]) a.push(d); return a; });
+  const livres = F.map((f, i) => abertos.filter(d => !bloq[i][d]));
   const metas = F.map((f, i) => Math.max(0, Math.min(f.meta, livres[i].length)));
   const temSS = F.map((f, i) => livres[i].some(d => ehSegSex(dow[d])));
   const idealFds = F.map((f, i) => livres[i].length ? metas[i] * livres[i].filter(d => ehFds(dow[d])).length / livres[i].length : 0);
   const fix = new Array(nDias).fill(0), fix7 = new Array(nDias).fill(0), fix8 = new Array(nDias).fill(0);
-  F.forEach((f, i) => { for (let d = 0; d < nDias; d++) if (bloq[i][d]) { fix[d]++; if (f.grupo === '7') fix7[d]++; if (f.grupo === '8') fix8[d]++; } });
-  const media = (metas.reduce((a, b) => a + b, 0) + fix.reduce((a, b) => a + b, 0)) / nDias;
+  F.forEach((f, i) => { for (const d of abertos) if (bloq[i][d]) { fix[d]++; if (f.grupo === '7') fix7[d]++; if (f.grupo === '8') fix8[d]++; } });
+  const media = abertos.length ? (metas.reduce((a, b) => a + b, 0) + abertos.reduce((s, d) => s + fix[d], 0)) / abertos.length : 0;
   let seed = (cfg.seed || Date.now()) % 2147483647 || 1;
   const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
   const ri = n => Math.floor(rnd() * n);
@@ -226,32 +275,38 @@ function gerarFolgas(cfg) {
   const porDia = new Array(nDias), o7 = new Array(nDias), o8 = new Array(nDias);
 
   function custo(off) {
-    let duro = 0, c = 0;
-    for (let d = 0; d < nDias; d++) { porDia[d] = fix[d]; o7[d] = fix7[d]; o8[d] = fix8[d]; }
+    let duro = 0, c = 0, quarta = 0;
+    for (const d of abertos) { porDia[d] = fix[d]; o7[d] = fix7[d]; o8[d] = fix8[d]; }
     for (let i = 0; i < N; i++) {
-      const a = aus[i]; for (let d = 0; d < nDias; d++) a[d] = bloq[i][d];
-      for (const d of off[i]) { if (d < 0) { c += 20000; continue; } a[d] = 2; porDia[d]++; if (F[i].grupo === '7') o7[d]++; if (F[i].grupo === '8') o8[d]++; }
+      // 1 = férias, 2 = folga, 3 = posto fechado (quebra a sequência de dias trabalhados)
+      const a = aus[i]; for (let d = 0; d < nDias; d++) a[d] = fechado[d] ? 3 : bloq[i][d];
+      for (const d of off[i]) { if (d < 0) { c += CUSTO_PENDENTE; continue; } a[d] = 2; porDia[d]++; if (F[i].grupo === '7') o7[d]++; if (F[i].grupo === '8') o8[d]++; }
     }
-    for (let d = 0; d < nDias; d++) {
-      if (porDia[d] > maxOff) duro += porDia[d] - maxOff;
-      if (ehUtil(dow[d])) { if (o7[d] > Math.max(0, max7)) duro += o7[d] - Math.max(0, max7); if (o8[d] > Math.max(0, max8)) duro += o8[d] - Math.max(0, max8); }
+    for (const d of abertos) {
+      const util = ehUtil(dow[d]);
+      const fTot = Math.max(0, porDia[d] - maxOff), f7 = util ? Math.max(0, o7[d] - max7) : 0, f8 = util ? Math.max(0, o8[d] - max8) : 0;
+      const falta = Math.max(fTot, f7 + f8);
+      if (falta) { if (ehQuarta(dow[d])) { quarta += falta; c += custoQuarta(falta); } else duro += falta; }
       c += 30 * (porDia[d] - media) ** 2;
     }
-    for (const [x, y] of pares) for (let d = 0; d < nDias; d++) if (aus[x][d] && aus[y][d] && !(bloq[x][d] && bloq[y][d])) duro++;
+    for (const [x, y] of pares) for (const d of abertos) if (aus[x][d] && aus[y][d] && !(bloq[x][d] && bloq[y][d])) duro++;
     for (let i = 0; i < N; i++) {
       if (!metas[i]) continue;
       const o = off[i];
       if (temSS[i] && !o.some(d => d >= 0 && ehSegSex(dow[d]))) c += 5000;
       const nf = o.filter(d => d >= 0 && ehFds(dow[d])).length;
       c += 400 * (nf - idealFds[i]) ** 2;
-      let corrida = 0; const a = aus[i];
+      let corrida = 0, ultima = -9; const a = aus[i];
       for (let d = 0; d < nDias; d++) {
-        if (a[d]) { if (corrida > 7) c += 60 * (corrida - 7) ** 2; corrida = 0; if (a[d] === 2 && d > 0 && a[d - 1] === 2) c += 800; }
-        else corrida++;
+        if (a[d]) {
+          if (corrida > 7) c += 60 * (corrida - 7) ** 2; corrida = 0;
+          // duas folgas seguidas, mesmo com o posto fechado no meio (ex.: sexta e segunda)
+          if (a[d] === 2) { if (ultima >= 0 && ultima === abertoAnterior[d]) c += 800; ultima = d; }
+        } else corrida++;
       }
       if (corrida > 7) c += 60 * (corrida - 7) ** 2;
     }
-    return { c: c + duro * 100000, duro };
+    return { c: c + duro * 100000, duro, quarta };
   }
   function inicial() {
     return F.map((f, i) => { const pool = livres[i].slice(), out = []; while (out.length < metas[i]) out.push(pool.splice(ri(pool.length), 1)[0]); return out; });
@@ -271,10 +326,12 @@ function gerarFolgas(cfg) {
       T = Math.max(1, T * 0.9997);
     }
     if (!melhor || cur < melhor.c) melhor = { c: cur, off: off.map(a => a.slice().sort((x, y) => x - y)) };
-    if (melhor.off.every(a => !a.includes(-1)) && custo(melhor.off).duro === 0 && r >= 1) break;
+    const cm = custo(melhor.off);
+    if (melhor.off.every(a => !a.includes(-1)) && cm.duro === 0 && cm.quarta === 0 && r >= 1) break;
   }
   const pendentes = melhor.off.reduce((s, a) => s + a.filter(d => d < 0).length, 0);
-  return { off: melhor.off.map(a => a.filter(d => d >= 0)), violacoes: custo(melhor.off).duro, pendentes };
+  const final = custo(melhor.off);
+  return { off: melhor.off.map(a => a.filter(d => d >= 0)), violacoes: final.duro, faltaQuarta: final.quarta, pendentes };
 }
 
 // ======================= modelo da escala =======================
@@ -293,16 +350,32 @@ function metaFolgas(f, nFerias, nDias) {
   return Math.min(f.folgas, Math.round(f.folgas * (nDias - nFerias) / nDias));
 }
 const contaFolgas = (f, nFerias, nDias) => `${f.folgas} × ${nDias - nFerias} ÷ ${nDias} = ${(f.folgas * (nDias - nFerias) / nDias).toFixed(1).replace('.', ',')}`;
+// Feriado do calendário: fechado ou aberto conforme o padrão, a não ser que a aba Agenda tenha trocado.
+function feriadoFecha(fer, cad) { const aj = (cad.feriadosAjuste || {})[fer.data]; return aj ? aj === 'fechado' : fer.fechadoPadrao; }
+// Dias do mês com o posto fechado -> motivo. Férias continuam contando em dias corridos, fechado ou não.
+function fechadosNoMes(info) {
+  const cad = estado.cadastro, abre = new Set(cad.diasSemana), mapa = new Map();
+  const fer = Object.fromEntries(feriadosDoAno(info.ano).map(f => [f.data, f]));
+  info.datas.forEach((iso, d) => {
+    const w = info.dow[d], f = fer[iso];
+    if (!abre.has(w)) mapa.set(d, `Posto não abre ${ehFds(w) ? 'aos' : 'às'} ${DIAS_LONGOS[w]}s`);
+    else if (f && feriadoFecha(f, cad)) mapa.set(d, f.nome);
+    else { const fx = (cad.fechados || []).find(x => iso >= x.inicio && iso <= x.fim); if (fx) mapa.set(d, fx.motivo || 'Posto fechado'); }
+  });
+  return mapa;
+}
 function montarGrade(chave) {
   const info = infoMes(chave), cad = estado.cadastro, escala = estado.escalas[chave];
+  const fechados = fechadosNoMes(info);
   const linhas = cad.funcionarios.map(f => {
     const fer = diasFeriasNoMes(cad, f.id, info);
     const salvo = escala?.linhas?.[f.id] || '';
     const cel = [];
-    for (let d = 0; d < info.nDias; d++) cel.push(fer.has(d) ? 'V' : (salvo[d] === 'F' ? 'F' : 'T'));
-    return { f, grupo: grupoDoTurno(f.turno), cel, nFerias: fer.size, meta: metaFolgas(f, fer.size, info.nDias), semLinha: !!escala && !escala.linhas?.[f.id] };
+    // V = férias, X = posto fechado, F = folga, T = trabalhando
+    for (let d = 0; d < info.nDias; d++) cel.push(fer.has(d) ? 'V' : fechados.has(d) ? 'X' : (salvo[d] === 'F' ? 'F' : 'T'));
+    return { f, grupo: grupoDoTurno(f.turno), cel, nFerias: fer.size, meta: metaFolgas(f, fer.size, info.nDias) };
   });
-  return { info, linhas, escala };
+  return { info, linhas, escala, fechados };
 }
 // Tudo o que muda a escala de um mês: equipe (turno e folgas), regras, duplas e as férias que caem nele.
 // A escala guarda isso ao ser gerada, e o aviso de "cadastro mudou" só aparece se mudou algo daquele mês.
@@ -310,7 +383,7 @@ function assinaturaMes(chave) {
   const cad = estado.cadastro, info = infoMes(chave);
   return textoEstavel({
     f: cad.funcionarios.map(f => [f.id, grupoDoTurno(f.turno), f.folgas, [...diasFeriasNoMes(cad, f.id, info)].sort((a, b) => a - b).join(',')]),
-    r: cad.regras, p: cad.pares || [],
+    r: cad.regras, p: cad.pares || [], x: [...fechadosNoMes(info).keys()].join(','),
   });
 }
 function validar(g) {
@@ -320,14 +393,18 @@ function validar(g) {
   const pares = (estado.cadastro.pares || []).filter(([a, b]) => a in idx && b in idx && a !== b);
   const conflitoPar = linhas.map(() => new Set());
   for (let d = 0; d < info.nDias; d++) {
+    if (g.fechados.has(d)) { dias.push({ fechado: true, motivo: g.fechados.get(d) }); continue; }
     let tot = 0, t7 = 0, t8 = 0;
     linhas.forEach(l => { if (l.cel[d] === 'T') { tot++; if (l.grupo === '7') t7++; if (l.grupo === '8') t8++; } });
     const util = ehUtil(info.dow[d]);
     const ruimTot = tot < R.minTotal, ruim7 = util && t7 < R.min7, ruim8 = util && t8 < R.min8;
     const rot = `Dia ${pad(d + 1)} (${DIAS_SEM[info.dow[d]].toLowerCase()})`;
-    if (ruimTot) alertas.push(`${rot}: ${tot} trabalhando, mínimo é ${R.minTotal}.`);
-    if (ruim7) alertas.push(`${rot}: ${t7} no turno ${TURNO_7}, mínimo é ${R.min7}.`);
-    if (ruim8) alertas.push(`${rot}: ${t8} no turno ${TURNO_8}, mínimo é ${R.min8}.`);
+    // Quarta é o dia escolhido para ficar com menos gente quando não há como dar todas as folgas: vira observação.
+    const quarta = ehQuarta(info.dow[d]) && (ruimTot || ruim7 || ruim8);
+    const lista = quarta ? avisos : alertas, fim = quarta ? ' Quarta com menos gente para completar as folgas.' : '';
+    if (ruimTot) lista.push(`${rot}: ${tot} trabalhando, mínimo é ${R.minTotal}.${fim}`);
+    if (ruim7) lista.push(`${rot}: ${t7} no turno ${TURNO_7}, mínimo é ${R.min7}.${fim}`);
+    if (ruim8) lista.push(`${rot}: ${t8} no turno ${TURNO_8}, mínimo é ${R.min8}.${fim}`);
     for (const [a, b] of pares) {
       const la = linhas[idx[a]], lb = linhas[idx[b]];
       if (la.cel[d] !== 'T' && lb.cel[d] !== 'T') {
@@ -337,14 +414,14 @@ function validar(g) {
           : `${rot}: ${primeiroNome(la.f.nome)} e ${primeiroNome(lb.f.nome)} ausentes no mesmo dia.`);
       }
     }
-    dias.push({ tot, t7, t8, ruimTot, ruim7, ruim8 });
+    dias.push({ tot, t7, t8, ruimTot, ruim7, ruim8, quarta });
   }
   const pessoas = linhas.map((l, i) => {
     const folgas = l.cel.reduce((s, c, d) => c === 'F' ? s.concat(d) : s, []);
     const ss = folgas.filter(d => ehSegSex(info.dow[d])).length;
     const fds = folgas.filter(d => ehFds(info.dow[d])).length;
-    const podeSS = l.cel.some((c, d) => c !== 'V' && ehSegSex(info.dow[d]));
-    if (folgas.length < l.meta) avisos.push(`${primeiroNome(l.f.nome)}: ${folgas.length} de ${l.meta} folgas - ${l.meta - folgas.length} pendente(s) para não deixar o dia abaixo do mínimo.`);
+    const podeSS = l.cel.some((c, d) => (c === 'T' || c === 'F') && ehSegSex(info.dow[d]));
+    if (folgas.length < l.meta) avisos.push(`${primeiroNome(l.f.nome)}: ${folgas.length} de ${l.meta} folgas - ${l.meta - folgas.length} pendente(s).`);
     else if (folgas.length > l.meta) avisos.push(`${primeiroNome(l.f.nome)}: ${folgas.length} folgas, o previsto é ${l.meta}.`);
     if (l.meta > 0 && podeSS && ss === 0) avisos.push(`${primeiroNome(l.f.nome)}: sem folga em segunda ou sexta neste mês.`);
     return { folgas, ss, fds, ruimMeta: folgas.length !== l.meta, ruimSS: l.meta > 0 && podeSS && ss === 0 };
@@ -363,7 +440,7 @@ const CHAVE_LOCAL = 'escala-posto-saude-v1';
 const estado = { cadastro: null, escalas: {}, modo: 'carregando' };
 let db = null;
 const filas = {};
-function cadastroVazio() { return { versao: 1, atualizadoEm: new Date().toISOString(), funcionarios: [], pares: [], regras: { minTotal: 8, min7: 4, min8: 3 }, ferias: [] }; }
+function cadastroVazio() { return { versao: 1, atualizadoEm: new Date().toISOString(), funcionarios: [], pares: [], regras: { minTotal: 8, min7: 4, min8: 3 }, ferias: [], diasSemana: [1, 2, 3, 4, 5], feriadosAjuste: {}, fechados: [] }; }
 // O banco aceita gravação de qualquer pessoa com o link: números viram números, datas e ids estranhos são descartados,
 // assim nada do banco entra na página como HTML.
 const ID_OK = /^[\w-]{1,40}$/, DATA_OK = /^\d{4}-\d{2}-\d{2}$/;
@@ -376,6 +453,12 @@ function normalizar(cad) {
   cad.ferias = (Array.isArray(cad.ferias) ? cad.ferias : []).filter(fe => fe && ID_OK.test(fe.id) && ID_OK.test(fe.funcId) && DATA_OK.test(fe.inicio) && DATA_OK.test(fe.fim))
     .map(fe => ({ ...fe, obs: String(fe.obs ?? '') }));
   cad.pares = (Array.isArray(cad.pares) ? cad.pares : []).filter(p => Array.isArray(p) && p.length === 2 && p.every(x => ID_OK.test(x)));
+  // Agenda: por padrão o posto abre de segunda a sexta.
+  cad.diasSemana = Array.isArray(cad.diasSemana) ? [...new Set(cad.diasSemana.map(Number).filter(w => Number.isInteger(w) && w >= 0 && w <= 6))].sort() : [1, 2, 3, 4, 5];
+  const aj = cad.feriadosAjuste && typeof cad.feriadosAjuste === 'object' ? cad.feriadosAjuste : {};
+  cad.feriadosAjuste = Object.fromEntries(Object.entries(aj).filter(([k, v]) => DATA_OK.test(k) && (v === 'aberto' || v === 'fechado')));
+  cad.fechados = (Array.isArray(cad.fechados) ? cad.fechados : []).filter(x => x && ID_OK.test(x.id) && DATA_OK.test(x.inicio) && DATA_OK.test(x.fim))
+    .map(x => ({ ...x, motivo: String(x.motivo ?? '') }));
   return cad;
 }
 // O Firestore não guarda lista dentro de lista: as duplas vão para o banco como {a, b}.
@@ -449,15 +532,23 @@ async function iniciar() {
   if (!r) { iniciarLocal(); return; }
   db = r.banco; estado.modo = r.modo;
   let ultimoCad = '';
-  db.doc('app/cadastro').onSnapshot(s => {
+  db.doc('app/cadastro').onSnapshot(async s => {
     const dados = s.exists ? doBanco(s.data()) : null;
+    // "Não existe" vindo da memória do navegador não quer dizer banco vazio: espera a resposta do servidor,
+    // senão os dados iniciais seriam gravados por cima dos dados reais.
+    if (!dados && s.metadata && s.metadata.fromCache) return;
     // Banco novo e vazio: grava a equipe e as escalas de dados-iniciais.js uma única vez.
     if (!dados && !estado.cadastro && window.DADOS_INICIAIS) {
-      estado.cadastro = clone(window.DADOS_INICIAIS.cadastro);
-      estado.escalas = { ...clone(window.DADOS_INICIAIS.escalas || {}), ...estado.escalas };
+      if (estado.modo === 'firebase') {
+        const conf = await db.doc('app/cadastro').get({ source: 'server' }).catch(() => null);
+        if (!conf || conf.exists || estado.cadastro) return;
+      }
+      estado.cadastro = normalizar(clone(window.DADOS_INICIAIS.cadastro));
+      const novas = Object.keys(window.DADOS_INICIAIS.escalas || {}).filter(k => !estado.escalas[k]);
+      novas.forEach(k => estado.escalas[k] = normalizarEscala(clone(window.DADOS_INICIAIS.escalas[k])));
       ultimoCad = textoEstavel(estado.cadastro);
       gravar('app/cadastro', clone(estado.cadastro));
-      Object.keys(window.DADOS_INICIAIS.escalas || {}).forEach(k => salvarEscala(k));
+      novas.forEach(k => salvarEscala(k));
       render(); return;
     }
     const txt = textoEstavel(dados);
@@ -490,7 +581,7 @@ function render() {
   const app = $('#app');
   const sx = app.querySelector('.grade-box')?.scrollLeft || 0;
   const foco = document.activeElement && document.activeElement.id && app.contains(document.activeElement) ? document.activeElement.id : null;
-  app.innerHTML = ({ escala: telaEscala, funcionarios: telaFuncionarios, ferias: telaFerias, regras: telaRegras })[ui.aba]();
+  app.innerHTML = ({ escala: telaEscala, funcionarios: telaFuncionarios, ferias: telaFerias, agenda: telaAgenda, regras: telaRegras })[ui.aba]();
   const gb = app.querySelector('.grade-box'); if (gb) gb.scrollLeft = sx;
   if (foco) { const el = document.getElementById(foco); if (el && el !== document.activeElement) el.focus(); }
 }
@@ -515,26 +606,27 @@ function telaEscala() {
   let html = topo;
   const desatualizada = escala.base ? escala.base !== assinaturaMes(ui.mes) : !!(escala.geradoEm && cad.atualizadoEm && cad.atualizadoEm > escala.geradoEm);
   if (desatualizada) html += `<div class="aviso">O cadastro (funcionários, férias ou regras) mudou depois que esta escala foi gerada. Confira os alertas ou clique em <b>Gerar nova distribuição</b>.</div>`;
-  html += `<div class="legenda"><span><i style="background:var(--surface-2)">T</i>Trabalhando</span><span><i style="background:var(--folga-bg);color:var(--folga-ink)">F</i>Folga</span><span><i style="background:var(--ferias-bg);color:var(--ferias-ink)">V</i>Férias (conta como ausência)</span><span><i style="background:var(--fds)"></i>Sábado/domingo</span><span>Clique num dia para trocar entre T e F.</span></div>`;
+  const fechados = g.fechados, temFds = info.dow.some((w, d) => ehFds(w) && !fechados.has(d));
+  html += `<div class="legenda"><span><i style="background:var(--surface-2)">T</i>Trabalhando</span><span><i style="background:var(--folga-bg);color:var(--folga-ink)">F</i>Folga</span><span><i style="background:var(--ferias-bg);color:var(--ferias-ink)">V</i>Férias (dias corridos)</span><span><i style="background:var(--fds)">–</i>Posto fechado (fim de semana, feriado — aba Agenda)</span><span><i style="background:var(--aviso-bg);color:var(--aviso-ink)">!</i>Quarta com menos gente</span><span>Clique num dia para trocar entre T e F.</span></div>`;
   html += `<div class="grade-box"><table class="grade"><thead><tr><th class="nome">Funcionário</th>`;
-  for (let d = 0; d < info.nDias; d++) html += `<th class="${ehFds(info.dow[d]) ? 'fds' : ''}"><span class="dn">${pad(d + 1)}</span><span class="ds">${DIAS_SEM[info.dow[d]]}</span></th>`;
-  html += `<th>Folgas</th><th>Seg/Sex</th><th>Sáb/Dom</th></tr></thead><tbody>`;
+  for (let d = 0; d < info.nDias; d++) html += `<th class="${fechados.has(d) ? 'fds' : ''}" ${fechados.has(d) ? `title="${esc(fechados.get(d))}"` : ''}><span class="dn">${pad(d + 1)}</span><span class="ds">${DIAS_SEM[info.dow[d]]}</span></th>`;
+  html += `<th>Folgas</th><th>Seg/Sex</th>${temFds ? '<th>Sáb/Dom</th>' : ''}</tr></thead><tbody>`;
   linhas.forEach((l, i) => {
     const p = v.pessoas[i];
     html += `<tr><td class="nome"><b>${esc(nomeCurto(l.f.nome))}</b><small>${esc(l.f.turno)}${l.nFerias ? ` · ${l.nFerias} dias de férias` : ''}</small></td>`;
     l.cel.forEach((c, d) => {
-      const cls = ['dia', c, ehFds(info.dow[d]) ? 'fds' : '', v.conflitoPar[i].has(d) ? 'par' : ''].join(' ');
-      const tit = c === 'V' ? 'Férias — altere na aba Férias' : (c === 'F' ? 'Folga — clique para marcar trabalho' : 'Trabalhando — clique para marcar folga');
-      html += `<td class="${cls}"><button data-cel="${i}:${d}" title="${tit}" aria-label="${esc(nomeCurto(l.f.nome))}, dia ${d + 1}: ${c === 'V' ? 'férias' : c === 'F' ? 'folga' : 'trabalhando'}">${c}</button></td>`;
+      const cls = ['dia', c, fechados.has(d) ? 'fds' : '', v.conflitoPar[i].has(d) ? 'par' : ''].join(' ');
+      const tit = c === 'V' ? 'Férias — altere na aba Férias' : c === 'X' ? `Posto fechado: ${fechados.get(d)}` : (c === 'F' ? 'Folga — clique para marcar trabalho' : 'Trabalhando — clique para marcar folga');
+      html += `<td class="${cls}"><button data-cel="${i}:${d}" title="${esc(tit)}" aria-label="${esc(nomeCurto(l.f.nome))}, dia ${d + 1}: ${c === 'V' ? 'férias' : c === 'X' ? 'posto fechado' : c === 'F' ? 'folga' : 'trabalhando'}">${c === 'X' ? '–' : c}</button></td>`;
     });
-    html += `<td class="tot ${p.ruimMeta ? 'ruim' : ''}">${p.folgas.length}/${l.meta}</td><td class="tot ${p.ruimSS ? 'ruim' : ''}">${p.ss}</td><td class="tot">${p.fds}</td></tr>`;
+    html += `<td class="tot ${p.ruimMeta ? 'ruim' : ''}">${p.folgas.length}/${l.meta}</td><td class="tot ${p.ruimSS ? 'ruim' : ''}">${p.ss}</td>${temFds ? `<td class="tot">${p.fds}</td>` : ''}</tr>`;
   });
   html += `</tbody><tfoot>`;
   const R = cad.regras;
   const linhaRes = (rot, campo, ruim, classe) => {
     let s = `<tr class="${classe || ''}"><td class="nome">${rot}</td>`;
-    v.dias.forEach(dd => s += `<td class="${dd[ruim] ? 'ruim' : ''}">${dd[campo]}</td>`);
-    return s + `<td colspan="3"></td></tr>`;
+    v.dias.forEach(dd => s += dd.fechado ? `<td class="fds">–</td>` : `<td class="${dd[ruim] ? (dd.quarta ? 'quarta' : 'ruim') : ''}">${dd[campo]}</td>`);
+    return s + `<td colspan="${temFds ? 3 : 2}"></td></tr>`;
   };
   html += linhaRes(`Turno 07h–16h <small>mín. ${R.min7} (seg–sex)</small>`, 't7', 'ruim7');
   html += linhaRes(`Turno 08h–17h <small>mín. ${R.min8} (seg–sex)</small>`, 't8', 'ruim8');
@@ -551,7 +643,8 @@ function telaEscala() {
   html += `</div></section><section class="painel"><h2>Conferência das regras</h2>`;
   html += nAlert ? `<h3 class="sub">Cobertura</h3><ul class="alertas">${v.alertas.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : `<p class="status ok">✓ Mínimos e duplas atendidos</p>`;
   if (nAviso) html += `<h3 class="sub">Observações</h3><ul class="alertas avisos">${v.avisos.map(a => `<li>${esc(a)}</li>`).join('')}</ul>`;
-  if (!nAlert && !nAviso) html += `<p class="nota">Mínimo diário, turnos de segunda a sexta, duplas que não folgam juntas, número de folgas e folga em segunda ou sexta conferidos.</p>`;
+  if (!nAlert && !nAviso) html += `<p class="nota">Mínimo diário, turnos de segunda a sexta, duplas que não folgam juntas, número de folgas e folga em segunda ou sexta conferidos nos ${info.nDias - fechados.size} dias com o posto aberto.</p>`;
+  if (fechados.size) html += `<p class="nota">Posto fechado em ${fechados.size} dias deste mês${[...fechados].filter(([d]) => !ehFds(info.dow[d])).length ? ` (além dos fins de semana: ${[...fechados].filter(([d]) => !ehFds(info.dow[d])).map(([d, m]) => `${pad(d + 1)} – ${esc(m)}`).join('; ')})` : ''}.</p>`;
   if (nAlert) html += `<p class="nota">Quando há férias demais no mesmo período, alguns dias podem ficar abaixo do mínimo mesmo sem ninguém de folga. Reveja as férias desses dias.</p>`;
   html += `</section></div>`;
   return html;
@@ -619,6 +712,44 @@ function telaFerias() {
   return h + `</div>`;
 }
 
+const TIPO_FERIADO = { nacional: 'Nacional', estadual: 'Estadual (SP)', municipal: 'Ribeirão Preto', facultativo: 'Ponto facultativo' };
+function telaAgenda() {
+  const cad = estado.cadastro, info = infoMes(ui.mes), fechados = fechadosNoMes(info), abre = new Set(cad.diasSemana);
+  let h = `<div class="barra-acoes"><h2>Agenda do posto</h2></div>
+    <p class="nota">Nos dias com o posto fechado ninguém trabalha nem folga, e eles não entram nos mínimos. As férias continuam contando em dias corridos, inclusive fins de semana e feriados.</p>
+    <div class="grid2"><section class="painel"><h2>Dias da semana em que o posto abre</h2><div class="form-linha">`;
+  [1, 2, 3, 4, 5, 6, 0].forEach(w => h += `<label class="check"><input type="checkbox" id="ds-${w}" data-semana="${w}" ${abre.has(w) ? 'checked' : ''}> ${cap(DIAS_LONGOS[w])}</label>`);
+  h += `</div></section>
+    <section class="painel"><h2>Outro dia sem funcionamento</h2><form id="form-fechado" class="form-linha">
+      <label class="campo">Início<input type="date" id="fx-ini" required value="${info.datas[0]}"></label>
+      <label class="campo">Fim<input type="date" id="fx-fim" required value="${info.datas[0]}"></label>
+      <label class="campo" style="flex:1;min-width:160px">Motivo<input id="fx-motivo" placeholder="ex.: ponte, dedetização, reforma"></label>
+      <button class="btn prim" type="submit">Marcar fechado</button></form>`;
+  const extras = (cad.fechados || []).slice().sort((a, b) => a.inicio.localeCompare(b.inicio));
+  if (extras.length) {
+    h += `<div class="tab-box" style="margin-top:12px"><table class="tab"><thead><tr><th>Período</th><th>Motivo</th><th></th></tr></thead><tbody>`;
+    extras.forEach(x => h += `<tr><td>${fmtData(x.inicio)}${x.fim !== x.inicio ? ` a ${fmtData(x.fim)}` : ''}</td><td>${esc(x.motivo)}</td><td><button class="btn perigo" data-acao="del-fechado" data-id="${x.id}">Remover</button></td></tr>`);
+    h += `</tbody></table></div>`;
+  }
+  h += `</section></div>`;
+  h += `<section class="painel" style="margin-top:18px"><h2>Feriados de ${info.ano}</h2>
+    <p class="nota">Feriados nacionais, de SP e de Ribeirão Preto vêm marcados como fechados; pontos facultativos vêm com o posto aberto. Troque o que não valer para o posto. Confira o São Sebastião (20/01): as fontes não concordam se é feriado municipal.</p>
+    <div class="tab-box"><table class="tab"><thead><tr><th>Data</th><th>Feriado</th><th>Tipo</th><th>Posto</th></tr></thead><tbody>`;
+  feriadosDoAno(info.ano).forEach(f => {
+    const [a, m, d] = f.data.split('-').map(Number), w = new Date(a, m - 1, d).getDay();
+    const fecha = feriadoFecha(f, cad), mudou = fecha !== f.fechadoPadrao;
+    h += `<tr><td>${fmtData(f.data).slice(0, 5)} <small class="nota">${DIAS_SEM[w].toLowerCase()}</small> ${f.data.slice(0, 7) === ui.mes ? `<span class="tag agora">${esc(MESES[info.mes - 1])}</span>` : ''}</td><td>${esc(f.nome)}</td><td><span class="tag">${TIPO_FERIADO[f.tipo]}</span></td>
+      <td><select id="fer-${f.data}" data-feriado="${f.data}" aria-label="Posto em ${esc(f.nome)}"><option value="fechado" ${fecha ? 'selected' : ''}>Fechado</option><option value="aberto" ${fecha ? '' : 'selected'}>Abre</option></select>${mudou ? ' <span class="tag">alterado</span>' : ''}</td></tr>`;
+  });
+  h += `</tbody></table></div></section>`;
+  const abertos = info.nDias - fechados.size;
+  h += `<section class="painel" style="margin-top:18px"><h2>${cap(info.nome)}</h2><p>${abertos} dias com o posto aberto, ${fechados.size} fechado(s).</p>`;
+  const naoFds = [...fechados].filter(([d]) => !ehFds(info.dow[d]));
+  if (naoFds.length) h += `<ul class="alertas avisos">${naoFds.map(([d, m]) => `<li>${pad(d + 1)} (${DIAS_SEM[info.dow[d]].toLowerCase()}): ${esc(m)}</li>`).join('')}</ul>`;
+  h += `<p class="nota">Depois de mudar a agenda, gere a escala do mês de novo.</p></section>`;
+  return h;
+}
+
 function telaRegras() {
   const cad = estado.cadastro, R = cad.regras;
   const opts = sel => cad.funcionarios.map(f => `<option value="${f.id}" ${f.id === sel ? 'selected' : ''}>${esc(nomeCurto(f.nome))}</option>`).join('');
@@ -626,7 +757,8 @@ function telaRegras() {
     <label class="campo">Mínimo de trabalhadores por dia (todos os dias)<input type="number" min="0" id="r-minTotal" data-regra="minTotal" value="${R.minTotal}"></label>
     <label class="campo">Mínimo no turno ${TURNO_7} (segunda a sexta)<input type="number" min="0" id="r-min7" data-regra="min7" value="${R.min7}"></label>
     <label class="campo">Mínimo no turno ${TURNO_8} (segunda a sexta)<input type="number" min="0" id="r-min8" data-regra="min8" value="${R.min8}"></label></div>
-    <p class="nota">Também valem sempre: folgas distribuídas de forma equilibrada e pelo menos uma folga em segunda ou sexta, quando possível.</p></section>
+    <p class="nota">Também valem sempre: folgas sorteadas e distribuídas de forma equilibrada, e pelo menos uma folga em segunda ou sexta, quando possível. Os mínimos só valem nos dias com o posto aberto (aba Agenda).</p>
+    <p class="nota"><b>Quando não couber:</b> se não der para dar todas as folgas sem ficar abaixo do mínimo, as <b>quartas</b> ficam com menos gente. Nos outros dias o mínimo é mantido.</p></section>
     <section class="painel"><h2>Não podem folgar no mesmo dia</h2><div class="tab-box"><table class="tab"><tbody>`;
   (cad.pares || []).forEach(([a, b], i) => {
     h += `<tr><td><select id="pa-${i}" data-par="${i}" data-lado="0" aria-label="Funcionário 1">${opts(a)}</select></td><td>e</td><td><select id="pb-${i}" data-par="${i}" data-lado="1" aria-label="Funcionário 2">${opts(b)}</select></td><td><button class="btn perigo" data-acao="del-par" data-i="${i}">Remover</button></td></tr>`;
@@ -638,28 +770,41 @@ function telaRegras() {
 }
 
 // ======================= ações =======================
-function gerarMes() {
-  const cad = estado.cadastro, info = infoMes(ui.mes);
+// Sorteia algumas distribuições e fica com a que fecha melhor as regras (cada clique dá um resultado diferente).
+function sortearMes(chave, tentativas = 3) {
+  const cad = estado.cadastro, info = infoMes(chave), fechados = fechadosNoMes(info);
   const F = cad.funcionarios.map(f => {
     const fer = diasFeriasNoMes(cad, f.id, info);
     return { id: f.id, grupo: grupoDoTurno(f.turno), bloqueados: [...fer], meta: metaFolgas(f, fer.size, info.nDias) };
   });
   const idx = Object.fromEntries(F.map((f, i) => [f.id, i]));
   const pares = (cad.pares || []).filter(([a, b]) => a in idx && b in idx && a !== b).map(([a, b]) => [idx[a], idx[b]]);
+  const fechado = new Uint8Array(info.nDias); fechados.forEach((m, d) => fechado[d] = 1);
+  let melhor = null;
+  for (let t = 0; t < tentativas; t++) {
+    const r = gerarFolgas({ nDias: info.nDias, dow: info.dow, funcionarios: F, pares, fechado, ...cad.regras, seed: Date.now() + t * 7919 });
+    const nota = r.violacoes * 1e6 + r.pendentes * 1e3 + r.faltaQuarta;
+    if (!melhor || nota < melhor.nota) melhor = { r, nota };
+  }
+  const linhas = {};
+  F.forEach((f, i) => { const s = new Set(melhor.r.off[i]); let t = ''; for (let d = 0; d < info.nDias; d++) t += s.has(d) ? 'F' : 'T'; linhas[f.id] = t; });
+  return { escala: { geradoEm: new Date().toISOString(), base: assinaturaMes(chave), linhas }, r: melhor.r };
+}
+function gerarMes() {
   ui.gerando = true; ui.confirmar = null; render();
   setTimeout(() => {
-    const r = gerarFolgas({ nDias: info.nDias, dow: info.dow, funcionarios: F, pares, ...cad.regras, seed: Date.now() });
-    const linhas = {};
-    F.forEach((f, i) => { const s = new Set(r.off[i]); let t = ''; for (let d = 0; d < info.nDias; d++) t += s.has(d) ? 'F' : 'T'; linhas[f.id] = t; });
-    estado.escalas[ui.mes] = { geradoEm: new Date().toISOString(), base: assinaturaMes(ui.mes), linhas };
+    const { escala, r } = sortearMes(ui.mes);
+    estado.escalas[ui.mes] = escala;
     salvarEscala(ui.mes);
     ui.gerando = false; render();
     toast(r.violacoes ? 'Escala gerada, mas faltam pessoas em alguns dias. Veja a conferência.'
-      : r.pendentes ? `Escala gerada. ${r.pendentes} folga(s) ficaram pendentes para manter o mínimo de pessoas.` : 'Escala gerada. Todas as regras atendidas.');
+      : r.pendentes ? `Escala gerada. ${r.pendentes} folga(s) ficaram pendentes mesmo usando as quartas.`
+      : r.faltaQuarta ? 'Escala gerada. Não coube tudo: algumas quartas ficaram com menos gente.' : 'Escala gerada. Todas as regras atendidas.');
   }, 30);
 }
 function alternarCelula(i, d) {
   const g = montarGrade(ui.mes), l = g.linhas[i];
+  if (l && l.cel[d] === 'X') { toast(`Posto fechado neste dia (${g.fechados.get(d)}). Para mudar, use a aba Agenda.`); return; }
   if (!l || l.cel[d] === 'V') { toast('Dia de férias. Para mudar, edite o período na aba Férias.'); return; }
   const esc_ = estado.escalas[ui.mes];
   const atual = (esc_.linhas[l.f.id] || 'T'.repeat(g.info.nDias)).padEnd(g.info.nDias, 'T').split('');
@@ -691,13 +836,15 @@ function baixarPDF() {
   const cab = () => { doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(21, 48, 44); doc.text('Posto de Saúde', 10, 12); doc.setFontSize(11); doc.text(titulo, 10, 18); };
   cab();
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(79, 102, 98);
-  doc.text('T = trabalhando   F = folga   V = férias   (colunas cinza: sábado e domingo)', W - 10, 18, { align: 'right' });
+  doc.text('T = trabalhando   F = folga   V = férias   - = posto fechado   (amarelo: quarta com menos gente)', W - 10, 18, { align: 'right' });
+  const fechados = g.fechados, temFds = info.dow.some((w, d) => ehFds(w) && !fechados.has(d));
   const head = [['Funcionário', 'Turno', ...info.dow.map((w, d) => pad(d + 1)), 'Folgas'], ['', '', ...info.dow.map(w => DIAS_SEM[w].slice(0, 3)), '']];
-  const body = linhas.map((l, i) => [nomeCurto(l.f.nome), l.f.turno.replace(' às ', '-'), ...l.cel, `${v.pessoas[i].folgas.length}`]);
+  const body = linhas.map((l, i) => [nomeCurto(l.f.nome), l.f.turno.replace(' às ', '-'), ...l.cel.map(c => c === 'X' ? '-' : c), `${v.pessoas[i].folgas.length}`]);
+  const num = campo => v.dias.map(d => d.fechado ? '-' : String(d[campo]));
   const foot = [
-    ['Turno 07h-16h (mín. ' + R.min7 + ' seg-sex)', '', ...v.dias.map(d => String(d.t7)), ''],
-    ['Turno 08h-17h (mín. ' + R.min8 + ' seg-sex)', '', ...v.dias.map(d => String(d.t8)), ''],
-    ['TOTAL TRABALHANDO (mín. ' + R.minTotal + ')', '', ...v.dias.map(d => String(d.tot)), ''],
+    ['Turno 07h-16h (mín. ' + R.min7 + ' seg-sex)', '', ...num('t7'), ''],
+    ['Turno 08h-17h (mín. ' + R.min8 + ' seg-sex)', '', ...num('t8'), ''],
+    ['TOTAL TRABALHANDO (mín. ' + R.minTotal + ')', '', ...num('tot'), ''],
   ];
   const larguraDias = (W - 20 - 52 - 18 - 11) / info.nDias;
   const colStyles = { 0: { cellWidth: 52, halign: 'left' }, 1: { cellWidth: 18 } };
@@ -711,30 +858,32 @@ function baixarPDF() {
     didParseCell: c => {
       const col = c.column.index - 2;
       if (col < 0 || col >= info.nDias) { if (c.section === 'foot' && c.row.index === 2) { c.cell.styles.fillColor = verde; c.cell.styles.textColor = 255; } return; }
-      const w = info.dow[col];
-      if (c.section === 'head' && ehFds(w)) c.cell.styles.fillColor = [80, 110, 104];
+      const fechadoDia = fechados.has(col);
+      if (c.section === 'head' && fechadoDia) c.cell.styles.fillColor = [80, 110, 104];
       if (c.section === 'head' && c.row.index === 1) { c.cell.styles.fontSize = 5; c.cell.styles.cellPadding = 0.4; }
       if (c.section === 'body') {
         const val = c.cell.raw;
         if (val === 'F') { c.cell.styles.fillColor = folga; c.cell.styles.fontStyle = 'bold'; c.cell.styles.textColor = [122, 42, 12]; }
         else if (val === 'V') { c.cell.styles.fillColor = ferias; c.cell.styles.fontStyle = 'bold'; c.cell.styles.textColor = [22, 63, 120]; }
-        else { if (ehFds(w)) c.cell.styles.fillColor = fds; c.cell.styles.textColor = [120, 140, 136]; }
+        else { if (fechadoDia) c.cell.styles.fillColor = fds; c.cell.styles.textColor = [120, 140, 136]; }
         if (v.conflitoPar[c.row.index].has(col)) { c.cell.styles.lineColor = verm; c.cell.styles.lineWidth = 0.6; }
       }
       if (c.section === 'foot') {
-        const dd = v.dias[col], ruim = [dd.ruim7, dd.ruim8, dd.ruimTot][c.row.index];
+        const dd = v.dias[col];
+        if (dd.fechado) { c.cell.styles.fillColor = fds; c.cell.styles.textColor = [120, 140, 136]; return; }
+        const ruim = [dd.ruim7, dd.ruim8, dd.ruimTot][c.row.index];
         if (c.row.index === 2) { c.cell.styles.fillColor = verde; c.cell.styles.textColor = 255; }
-        if (ruim) { c.cell.styles.fillColor = verm; c.cell.styles.textColor = 255; }
+        if (ruim) { c.cell.styles.fillColor = dd.quarta ? [255, 225, 140] : verm; c.cell.styles.textColor = dd.quarta ? [107, 77, 0] : 255; }
       }
     },
   });
   doc.addPage(); cab();
   doc.autoTable({
     startY: 24, theme: 'grid', margin: { left: 10, right: 10 },
-    head: [['Funcionário', 'Turno', 'Dias de folga', 'Férias no mês', 'Dias a trabalhar', 'Folgas', 'Seg/Sex', 'Sáb/Dom']],
+    head: [['Funcionário', 'Turno', 'Dias de folga', 'Férias no mês', 'Dias a trabalhar', 'Folgas', 'Seg/Sex', ...(temFds ? ['Sáb/Dom'] : [])]],
     body: linhas.map((l, i) => {
       const p = v.pessoas[i];
-      return [nomeCurto(l.f.nome), l.f.turno, p.folgas.map(d => `${pad(d + 1)}/${pad(info.mes)} (${DIAS_SEM[info.dow[d]].toLowerCase()})`).join(', ') || '-', periodosFerias(l.f.id, info).join('; ') || '-', `${info.nDias - l.nFerias} de ${info.nDias}`, `${p.folgas.length} de ${l.meta}`, String(p.ss), String(p.fds)];
+      return [nomeCurto(l.f.nome), l.f.turno, p.folgas.map(d => `${pad(d + 1)}/${pad(info.mes)} (${DIAS_SEM[info.dow[d]].toLowerCase()})`).join(', ') || '-', periodosFerias(l.f.id, info).join('; ') || '-', `${info.nDias - l.nFerias} de ${info.nDias}`, `${p.folgas.length} de ${l.meta}`, String(p.ss), ...(temFds ? [String(p.fds)] : [])];
     }),
     styles: { fontSize: 8, cellPadding: 1.6, valign: 'middle', textColor: [21, 48, 44], lineColor: [190, 205, 201], lineWidth: 0.15 },
     headStyles: { fillColor: verde, textColor: 255 },
@@ -743,7 +892,9 @@ function baixarPDF() {
   let y = doc.lastAutoTable.finalY + 8;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text('Conferência das regras', 10, y); y += 5;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-  const regras = [`Mínimo de ${R.minTotal} trabalhando por dia (todos os dias).`, `Segunda a sexta: mínimo de ${R.min7} no turno ${TURNO_7} e ${R.min8} no turno ${TURNO_8}.`, 'Férias contam como ausência em todas as regras.', 'Folgas proporcionais aos dias a trabalhar no mês: folgas do mês inteiro x dias a trabalhar / dias do mês, arredondado.'];
+  const regras = [`Mínimo de ${R.minTotal} trabalhando por dia com o posto aberto.`, `Segunda a sexta: mínimo de ${R.min7} no turno ${TURNO_7} e ${R.min8} no turno ${TURNO_8}.`, 'Férias contam como ausência em todas as regras e em dias corridos.', 'Folgas proporcionais aos dias a trabalhar no mês: folgas do mês inteiro x dias a trabalhar / dias do mês, arredondado.', 'Quando não cabem todas as folgas, as quartas ficam com menos gente; nos outros dias o mínimo é mantido.'];
+  const fechadosUteis = [...fechados].filter(([d]) => !ehFds(info.dow[d]));
+  if (fechadosUteis.length) regras.push(`Posto fechado (além dos fins de semana): ${fechadosUteis.map(([d, m]) => `${pad(d + 1)}/${pad(info.mes)} ${m}`).join('; ')}.`);
   const pares = (estado.cadastro.pares || []).map(([a, b]) => { const n = id => nomeCurto(estado.cadastro.funcionarios.find(f => f.id === id)?.nome || '?'); return `${n(a)} e ${n(b)} não folgam no mesmo dia.`; });
   let linhasTxt = regras.concat(pares, ['']);
   linhasTxt = linhasTxt.concat(v.alertas.length ? ['Problemas de cobertura:'].concat(v.alertas.map(a => '- ' + a)) : ['Resultado: mínimos diários e duplas atendidos.']);
@@ -800,6 +951,7 @@ document.addEventListener('click', e => {
     ui.confirmar = null; salvarCadastro(); render(); toast('Funcionário removido.');
   }
   else if (a === 'del-ferias') { cad.ferias = cad.ferias.filter(fe => fe.id !== b.dataset.id); salvarCadastro(); render(); toast('Período de férias removido.'); }
+  else if (a === 'del-fechado') { cad.fechados = cad.fechados.filter(x => x.id !== b.dataset.id); salvarCadastro(); render(); toast('O posto volta a abrir nesse período.'); }
   else if (a === 'add-par') { if (cad.funcionarios.length < 2) return; cad.pares = cad.pares || []; cad.pares.push([cad.funcionarios[0].id, cad.funcionarios[1].id]); salvarCadastro(); render(); }
   else if (a === 'del-par') { cad.pares.splice(Number(b.dataset.i), 1); salvarCadastro(); render(); }
   else if (a === 'exportar') exportar();
@@ -816,9 +968,28 @@ document.addEventListener('change', e => {
     cad.regras[t.dataset.regra] = Math.max(0, parseInt(t.value, 10) || 0); salvarCadastro(); setTimeout(render);
   } else if (t.dataset.par !== undefined) {
     cad.pares[Number(t.dataset.par)][Number(t.dataset.lado)] = t.value; salvarCadastro(); setTimeout(render);
+  } else if (t.dataset.semana !== undefined) {
+    const w = Number(t.dataset.semana), s = new Set(cad.diasSemana);
+    if (t.checked) s.add(w); else s.delete(w);
+    cad.diasSemana = [...s].sort(); salvarCadastro(); setTimeout(render);
+  } else if (t.dataset.feriado) {
+    const f = feriadosDoAno(Number(t.dataset.feriado.slice(0, 4))).find(x => x.data === t.dataset.feriado); if (!f) return;
+    cad.feriadosAjuste = cad.feriadosAjuste || {};
+    if ((t.value === 'fechado') === f.fechadoPadrao) delete cad.feriadosAjuste[f.data]; else cad.feriadosAjuste[f.data] = t.value;
+    salvarCadastro(); setTimeout(render);
   }
 });
 document.addEventListener('submit', e => {
+  if (e.target.id === 'form-fechado') {
+    e.preventDefault();
+    const inicio = $('#fx-ini').value, fim = $('#fx-fim').value, motivo = $('#fx-motivo').value.trim();
+    if (!inicio || !fim) { toast('Preencha o início e o fim.'); return; }
+    if (fim < inicio) { toast('A data de fim precisa ser igual ou depois do início.'); return; }
+    estado.cadastro.fechados = estado.cadastro.fechados || [];
+    estado.cadastro.fechados.push({ id: novoId(), inicio, fim, motivo: motivo || 'Posto fechado' });
+    salvarCadastro(); render(); toast('Dia sem funcionamento marcado. Gere a escala do mês de novo.');
+    return;
+  }
   if (e.target.id !== 'form-ferias') return;
   e.preventDefault();
   const funcId = $('#fe-func').value, inicio = $('#fe-ini').value, fim = $('#fe-fim').value, obs = $('#fe-obs').value.trim();
