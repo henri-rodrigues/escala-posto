@@ -258,6 +258,7 @@ function gerarFolgas(cfg) {
   const abertos = [], abertoAnterior = new Int16Array(nDias).fill(-1);
   for (let d = 0, ult = -1; d < nDias; d++) { abertoAnterior[d] = ult; if (!fechado[d]) { abertos.push(d); ult = d; } }
   const N = F.length;
+  if (!N) return { off: [], violacoes: 0, faltaQuarta: 0, pendentes: 0 };
   const n7 = F.filter(f => f.grupo === '7').length, n8 = F.filter(f => f.grupo === '8').length;
   const maxOff = N - minTotal, max7 = Math.max(0, n7 - min7), max8 = Math.max(0, n8 - min8);
   const bloq = F.map(f => { const s = new Uint8Array(nDias); f.bloqueados.forEach(d => s[d] = 1); return s; });
@@ -592,8 +593,11 @@ function telaEscala() {
   const g = montarGrade(ui.mes), v = validar(g), { info, linhas, escala } = g;
   const nAlert = v.alertas.length, nAviso = v.avisos.length;
   let topo = `<div class="barra-acoes">`;
+  const quartas = v.dias.map((d, i) => d.quarta ? pad(i + 1) : null).filter(Boolean);
   if (escala) topo += nAlert ? `<span class="status ruim">● ${nAlert} ${nAlert === 1 ? 'problema de cobertura' : 'problemas de cobertura'}</span>`
-    : `<span class="status ok">✓ Mínimos e duplas atendidos</span>${nAviso ? ` <span class="status atencao">${nAviso} ${nAviso === 1 ? 'observação' : 'observações'}</span>` : ''}`;
+    : quartas.length ? `<span class="status atencao">✓ Mínimos atendidos, exceto ${quartas.length === 1 ? 'na quarta' : 'nas quartas'} ${quartas.join(', ')}</span>`
+    : `<span class="status ok">✓ Mínimos e duplas atendidos</span>`;
+  if (escala && nAviso) topo += ` <span class="status atencao">${nAviso} ${nAviso === 1 ? 'observação' : 'observações'}</span>`;
   topo += `<span class="esp"></span>`;
   if (ui.confirmar === 'regerar') topo += `<span class="confirma">Substituir as folgas de ${esc(info.nome)} por uma nova distribuição? <button class="btn prim" data-acao="gerar">Sim, gerar de novo</button><button class="btn" data-acao="cancelar">Cancelar</button></span>`;
   else topo += `<button class="btn ${escala ? '' : 'prim'}" data-acao="${escala ? 'pedir-regerar' : 'gerar'}" ${ui.gerando ? 'disabled' : ''}>${ui.gerando ? 'Gerando…' : (escala ? 'Gerar nova distribuição' : 'Gerar escala do mês')}</button>`;
@@ -705,7 +709,7 @@ function telaFerias() {
       const dias = Math.round((new Date(fe.fim + 'T12:00') - new Date(fe.inicio + 'T12:00')) / 864e5) + 1;
       const noMes = fe.fim >= info.datas[0] && fe.inicio <= info.datas[info.nDias - 1];
       h += `<tr><td>${esc(nomeCurto(nomes[fe.funcId] || 'Funcionário removido'))} ${noMes ? `<span class="tag agora">${esc(MESES[info.mes - 1])}</span>` : ''}</td><td>${fmtData(fe.inicio)} a ${fmtData(fe.fim)}</td><td>${dias}</td><td>${esc(fe.obs || '')}</td>
-        <td><button class="btn perigo" data-acao="del-ferias" data-id="${fe.id}">Remover</button></td></tr>`;
+        <td>${ui.confirmar === 'del-ferias:' + fe.id ? `<span class="confirma">Remover estas férias? <button class="btn perigo" data-acao="confirma-del-ferias" data-id="${fe.id}">Remover</button><button class="btn" data-acao="cancelar">Não</button></span>` : `<button class="btn perigo" data-acao="del-ferias" data-id="${fe.id}">Remover</button>`}</td></tr>`;
     });
     h += `</tbody></table></div>`;
   }
@@ -728,7 +732,7 @@ function telaAgenda() {
   const extras = (cad.fechados || []).slice().sort((a, b) => a.inicio.localeCompare(b.inicio));
   if (extras.length) {
     h += `<div class="tab-box" style="margin-top:12px"><table class="tab"><thead><tr><th>Período</th><th>Motivo</th><th></th></tr></thead><tbody>`;
-    extras.forEach(x => h += `<tr><td>${fmtData(x.inicio)}${x.fim !== x.inicio ? ` a ${fmtData(x.fim)}` : ''}</td><td>${esc(x.motivo)}</td><td><button class="btn perigo" data-acao="del-fechado" data-id="${x.id}">Remover</button></td></tr>`);
+    extras.forEach(x => h += `<tr><td>${fmtData(x.inicio)}${x.fim !== x.inicio ? ` a ${fmtData(x.fim)}` : ''}</td><td>${esc(x.motivo)}</td><td>${ui.confirmar === 'del-fechado:' + x.id ? `<span class="confirma">O posto volta a abrir? <button class="btn perigo" data-acao="confirma-del-fechado" data-id="${x.id}">Remover</button><button class="btn" data-acao="cancelar">Não</button></span>` : `<button class="btn perigo" data-acao="del-fechado" data-id="${x.id}">Remover</button>`}</td></tr>`);
     h += `</tbody></table></div>`;
   }
   h += `</section></div>`;
@@ -739,7 +743,7 @@ function telaAgenda() {
     const [a, m, d] = f.data.split('-').map(Number), w = new Date(a, m - 1, d).getDay();
     const fecha = feriadoFecha(f, cad), mudou = fecha !== f.fechadoPadrao;
     h += `<tr><td>${fmtData(f.data).slice(0, 5)} <small class="nota">${DIAS_SEM[w].toLowerCase()}</small> ${f.data.slice(0, 7) === ui.mes ? `<span class="tag agora">${esc(MESES[info.mes - 1])}</span>` : ''}</td><td>${esc(f.nome)}</td><td><span class="tag">${TIPO_FERIADO[f.tipo]}</span></td>
-      <td><select id="fer-${f.data}" data-feriado="${f.data}" aria-label="Posto em ${esc(f.nome)}"><option value="fechado" ${fecha ? 'selected' : ''}>Fechado</option><option value="aberto" ${fecha ? '' : 'selected'}>Abre</option></select>${mudou ? ' <span class="tag">alterado</span>' : ''}</td></tr>`;
+      <td>${abre.has(w) ? `<select id="fer-${f.data}" data-feriado="${f.data}" aria-label="Posto em ${esc(f.nome)}"><option value="fechado" ${fecha ? 'selected' : ''}>Fechado</option><option value="aberto" ${fecha ? '' : 'selected'}>Abre</option></select>${mudou ? ' <span class="tag">alterado</span>' : ''}` : `<span class="nota">Cai ${ehFds(w) ? 'num' : 'numa'} ${DIAS_LONGOS[w]}: posto já fechado</span>`}</td></tr>`;
   });
   h += `</tbody></table></div></section>`;
   const abertos = info.nDias - fechados.size;
@@ -761,7 +765,7 @@ function telaRegras() {
     <p class="nota"><b>Quando não couber:</b> se não der para dar todas as folgas sem ficar abaixo do mínimo, as <b>quartas</b> ficam com menos gente. Nos outros dias o mínimo é mantido.</p></section>
     <section class="painel"><h2>Não podem folgar no mesmo dia</h2><div class="tab-box"><table class="tab"><tbody>`;
   (cad.pares || []).forEach(([a, b], i) => {
-    h += `<tr><td><select id="pa-${i}" data-par="${i}" data-lado="0" aria-label="Funcionário 1">${opts(a)}</select></td><td>e</td><td><select id="pb-${i}" data-par="${i}" data-lado="1" aria-label="Funcionário 2">${opts(b)}</select></td><td><button class="btn perigo" data-acao="del-par" data-i="${i}">Remover</button></td></tr>`;
+    h += `<tr><td><select id="pa-${i}" data-par="${i}" data-lado="0" aria-label="Funcionário 1">${opts(a)}</select></td><td>e</td><td><select id="pb-${i}" data-par="${i}" data-lado="1" aria-label="Funcionário 2">${opts(b)}</select></td><td>${ui.confirmar === 'del-par:' + i ? `<span class="confirma">Remover? <button class="btn perigo" data-acao="confirma-del-par" data-i="${i}">Remover</button><button class="btn" data-acao="cancelar">Não</button></span>` : `<button class="btn perigo" data-acao="del-par" data-i="${i}">Remover</button>`}</td></tr>`;
   });
   h += `</tbody></table></div><p><button class="btn" data-acao="add-par">Adicionar dupla</button></p><p class="nota">Férias contam como ausência: se uma pessoa da dupla estiver de férias, a outra não folga nesses dias.</p></section>
     <section class="painel"><h2>Cópia de segurança</h2><p class="nota">${estado.modo === 'firebase' ? 'Os dados ficam salvos no banco de dados (Firebase) e aparecem para todos que abrem o site. Qualquer pessoa com o link pode alterar: exporte uma cópia de vez em quando.' : estado.modo === 'compartilhado' ? 'Os dados ficam salvos junto com esta página e aparecem para todos que a abrem.' :'Os dados ficam salvos neste navegador. Exporte uma cópia para guardar ou para abrir em outro computador.'}</p>
@@ -783,7 +787,9 @@ function sortearMes(chave, tentativas = 3) {
   let melhor = null;
   for (let t = 0; t < tentativas; t++) {
     const r = gerarFolgas({ nDias: info.nDias, dow: info.dow, funcionarios: F, pares, fechado, ...cad.regras, seed: Date.now() + t * 7919 });
-    const nota = r.violacoes * 1e6 + r.pendentes * 1e3 + r.faltaQuarta;
+    // quem podia folgar numa segunda ou sexta aberta e ficou sem
+    const semSS = F.filter((f, i) => f.meta && !r.off[i].some(d => ehSegSex(info.dow[d])) && info.dow.some((w, d) => ehSegSex(w) && !fechado[d] && !f.bloqueados.includes(d))).length;
+    const nota = r.violacoes * 1e6 + r.pendentes * 1e3 + r.faltaQuarta * 10 + semSS;
     if (!melhor || nota < melhor.nota) melhor = { r, nota };
   }
   const linhas = {};
@@ -950,10 +956,13 @@ document.addEventListener('click', e => {
     cad.ferias = (cad.ferias || []).filter(fe => fe.funcId !== id);
     ui.confirmar = null; salvarCadastro(); render(); toast('Funcionário removido.');
   }
-  else if (a === 'del-ferias') { cad.ferias = cad.ferias.filter(fe => fe.id !== b.dataset.id); salvarCadastro(); render(); toast('Período de férias removido.'); }
-  else if (a === 'del-fechado') { cad.fechados = cad.fechados.filter(x => x.id !== b.dataset.id); salvarCadastro(); render(); toast('O posto volta a abrir nesse período.'); }
+  else if (a === 'del-ferias') { ui.confirmar = 'del-ferias:' + b.dataset.id; render(); }
+  else if (a === 'confirma-del-ferias') { cad.ferias = cad.ferias.filter(fe => fe.id !== b.dataset.id); ui.confirmar = null; salvarCadastro(); render(); toast('Período de férias removido.'); }
+  else if (a === 'del-fechado') { ui.confirmar = 'del-fechado:' + b.dataset.id; render(); }
+  else if (a === 'confirma-del-fechado') { cad.fechados = cad.fechados.filter(x => x.id !== b.dataset.id); ui.confirmar = null; salvarCadastro(); render(); toast('O posto volta a abrir nesse período.'); }
   else if (a === 'add-par') { if (cad.funcionarios.length < 2) return; cad.pares = cad.pares || []; cad.pares.push([cad.funcionarios[0].id, cad.funcionarios[1].id]); salvarCadastro(); render(); }
-  else if (a === 'del-par') { cad.pares.splice(Number(b.dataset.i), 1); salvarCadastro(); render(); }
+  else if (a === 'del-par') { ui.confirmar = 'del-par:' + b.dataset.i; render(); }
+  else if (a === 'confirma-del-par') { cad.pares.splice(Number(b.dataset.i), 1); ui.confirmar = null; salvarCadastro(); render(); }
   else if (a === 'exportar') exportar();
   else if (a === 'importar') $('#arquivo-import').click();
 });
@@ -995,6 +1004,8 @@ document.addEventListener('submit', e => {
   const funcId = $('#fe-func').value, inicio = $('#fe-ini').value, fim = $('#fe-fim').value, obs = $('#fe-obs').value.trim();
   if (!funcId || !inicio || !fim) { toast('Preencha funcionário, início e fim.'); return; }
   if (fim < inicio) { toast('A data de fim precisa ser igual ou depois do início.'); return; }
+  const junto = (estado.cadastro.ferias || []).find(fe => fe.funcId === funcId && fe.inicio <= fim && fe.fim >= inicio);
+  if (junto) { toast(`Essa pessoa já tem férias de ${fmtData(junto.inicio)} a ${fmtData(junto.fim)}. Remova esse período antes de cadastrar outro por cima.`); return; }
   estado.cadastro.ferias = estado.cadastro.ferias || [];
   estado.cadastro.ferias.push({ id: novoId(), funcId, inicio, fim, obs });
   salvarCadastro(); render(); toast('Férias cadastradas. Gere a escala do mês de novo para redistribuir as folgas.');
